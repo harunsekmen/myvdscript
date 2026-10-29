@@ -6,3 +6,4 @@ src-tauri/binaries/*.exe
 build.log
 dev.log
 plans
+Portable
