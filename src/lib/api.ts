@@ -25,6 +25,7 @@ export const api = {
   hasApiKey: () => invoke<boolean>("has_api_key"),
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   fetchTranscript: (url: string) => invoke<Transcript>("fetch_transcript", { url }),
+  tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };
 

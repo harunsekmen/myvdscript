@@ -190,3 +190,7 @@ mark.hl:hover { background: #f2b44d55; }
 .md blockquote { margin: 0 0 .7em; padding: 2px 12px; border-left: 3px solid #3b4678; color: #b4b8c9; }
 .md hr { border: none; border-top: 1px solid var(--line); margin: .9em 0; }
 .md-link { color: var(--accent); text-decoration: underline dotted; }
+
+/* Seçili metni dinleme */
+.pron-pick { position: fixed; z-index: 49; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg-3); box-shadow: 0 2px 8px rgba(0,0,0,.4); cursor: pointer; font-size: 13px; line-height: 1; }
+.pron-pick:hover { border-color: var(--accent); background: var(--accent-2); }

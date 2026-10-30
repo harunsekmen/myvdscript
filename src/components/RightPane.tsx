@@ -7,6 +7,7 @@ import { collectImagePaths } from "../lib/copyExport";
 import type { ImageMeta, Project } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
 import { ImageViewer } from "./ImageViewer";
+import { speak } from "../lib/speech";
 
 interface Props {
   project: Project;
@@ -24,6 +25,10 @@ export function RightPane({ project, onDoc, onMeta, onToast, registerGetDoc }: P
   const known = useRef<Set<string>>(collectImagePaths(project.editorDoc));
   const pending = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const latestPaths = useRef<Set<string>>(known.current);
+  const [pick, setPick] = useState<{ text: string; rect: DOMRect } | null>(null);
+  const play = (text: string) => {
+    void speak(text).then((ok) => ok || onToast("Ses çalınamadı (internet bağlantısını kontrol et)", "error"));
+  };
   const metaRef = useRef(project.imageMeta);
   metaRef.current = project.imageMeta;
 
@@ -76,6 +81,26 @@ export function RightPane({ project, onDoc, onMeta, onToast, registerGetDoc }: P
         const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
         void insertImages(files, pos);
         return true;
+      },
+      handleDOMEvents: {
+        mousedown: () => {
+          setPick(null);
+          return false;
+        },
+        mouseup: (view) => {
+          // Seçim oturunca (kelime ya da öbek) yanında küçük bir ikon göster
+          setTimeout(() => {
+            const { from, to, empty } = view.state.selection;
+            if (empty || to - from > 200) return;
+            const text = view.state.doc.textBetween(from, to, " ").trim().replace(/\s+/g, " ");
+            if (!/\p{L}/u.test(text)) return;
+            const a = view.coordsAtPos(from);
+            const b = view.coordsAtPos(to);
+            const rect = new DOMRect(a.left, a.top, Math.max(b.right - a.left, 1), b.bottom - a.top);
+            setPick({ text, rect });
+          }, 0);
+          return false;
+        },
       },
       handleClickOn: (_v, _pos, node) => {
         if (node.type.name === "imageChip") {
@@ -149,6 +174,17 @@ export function RightPane({ project, onDoc, onMeta, onToast, registerGetDoc }: P
       <div className="editor-scroll" onClick={(e) => e.target === e.currentTarget && editor.commands.focus("end")}>
         <EditorContent editor={editor} className="editor-col" />
       </div>
+      {pick && (
+        <button
+          className="pron-pick"
+          style={{ top: pick.rect.top - 34, left: Math.min(pick.rect.right + 4, window.innerWidth - 40) }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => play(pick.text)}
+          title="Seçili metni dinle"
+        >
+          🔊
+        </button>
+      )}
       {openPath && (
         <ImageViewer
           path={openPath}

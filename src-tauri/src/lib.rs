@@ -2,7 +2,7 @@ mod commands;
 mod store;
 mod ytdlp;
 
-use commands::{ai, images, projects, settings, transcript};
+use commands::{ai, images, projects, settings, transcript, tts};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -40,6 +40,7 @@ pub fn run() {
             ai::list_models,
             ai::ai_stream,
             ai::ai_cancel,
+            tts::tts,
         ])
         .run(tauri::generate_context!())
         .expect("uygulama başlatılamadı");
