@@ -9,6 +9,19 @@ export interface Transcript {
   text: string;
 }
 
+export interface MediaWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface MediaTranscript {
+  language: string;
+  duration: number;
+  text: string;
+  words: MediaWord[];
+}
+
 export const api = {
   listProjects: () => invoke<ProjectMeta[]>("list_projects"),
   createProject: (title: string, url: string) => invoke<Project>("create_project", { title, url }),
@@ -24,6 +37,10 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
   hasApiKey: () => invoke<boolean>("has_api_key"),
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
+  hasGroqKey: () => invoke<boolean>("has_groq_key"),
+  setGroqKey: (key: string) => invoke<void>("set_groq_key", { key }),
+  transcribeMedia: (path: string, language: string) =>
+    invoke<MediaTranscript>("transcribe_media", { path, language }),
   fetchTranscript: (url: string) => invoke<Transcript>("fetch_transcript", { url }),
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),

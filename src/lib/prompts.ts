@@ -43,6 +43,19 @@ export function buildChunkMessage(chunk: string, prevTitle: string | null, index
   return `${head}\n\nAltyazı metni:\n\n${chunk}`.trim();
 }
 
+export const WORD_CHECK_PROMPT = `Sen bir transkript düzeltme asistanısın. Sana konuşma tanıma (ASR) ile üretilmiş, kelime kelime zamanlı bir metin verilecek. Her satır şu biçimdedir: \`numara [dakika:saniye.salise] kelime\`. Zaman, o kelimenin konuşulduğu andır; bağlamı anlamak için kullan. Metnin dilini kendin algıla.
+
+Görevin: YALNIZCA açıkça yanlış duyulmuş, yazım hatası içeren ya da bağlama hiç uymayan kelimeleri bulmak ve doğru halini önermek.
+
+Kurallar:
+- Emin olmadığın kelimeye dokunma. Konuşmacının gerçekten söylediğini tahmin et, süsleme yapma.
+- Noktalama, büyük/küçük harf ve üslup düzeltmesi önerme; yalnızca kelime hatalarını düzelt.
+- Her öneri tek bir kelime olsun (gerekirse en fazla üç kelimelik kısa bir ifade).
+- Kelime ekleme, silme ya da yeniden sıralama önerme.
+- Yanıtı YALNIZCA şu JSON biçiminde ver, başka hiçbir şey yazma:
+{"fixes":[{"n":12,"to":"doğru kelime"}]}
+Hiç düzeltme gerekmiyorsa: {"fixes":[]}`;
+
 export function buildInsightMessage(selected: string, context: string): string {
   return `Seçilen ifade:\n"${selected}"\n\nÇevresindeki metin (bağlam):\n${context}\n\nBu ifadeyi/kavramı açıkla.`;
 }

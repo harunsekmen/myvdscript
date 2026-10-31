@@ -2,7 +2,7 @@ mod commands;
 mod store;
 mod ytdlp;
 
-use commands::{ai, images, projects, settings, transcript, tts};
+use commands::{ai, images, projects, settings, stt, transcript, tts};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,6 +36,9 @@ pub fn run() {
             settings::save_settings,
             settings::has_api_key,
             settings::set_api_key,
+            settings::has_groq_key,
+            settings::set_groq_key,
+            stt::transcribe_media,
             transcript::fetch_transcript,
             ai::list_models,
             ai::ai_stream,

@@ -7,10 +7,14 @@ import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
 import { processTranscript, type PipelineRun } from "./lib/pipeline";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
-import type { ImageMeta, Insight, Project, ProjectMeta, Segment, Settings } from "./lib/types";
+import { exportTimed, normalizeTimed } from "./lib/timed";
+import type { ImageMeta, Insight, Project, ProjectMeta, Segment, Settings, TimedDoc } from "./lib/types";
+
+/** Diskten okunan projeyi güncel şemaya getirir (eski kelimelere kimlik ekler). */
+const withSchema = (p: Project): Project => ({ ...p, timed: p.timed ? normalizeTimed(p.timed) : null });
 import { ConfirmDialog, TextDialog } from "./components/Dialogs";
 import { LeftPane, type ProcState } from "./components/LeftPane";
-import { RightPane } from "./components/RightPane";
+import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TopBar } from "./components/TopBar";
 
@@ -31,6 +35,7 @@ const DEFAULTS: Settings = {
   segmentTint: 0.12,
   chunkChars: 6000,
   lastProjectId: "",
+  sttLanguage: "",
 };
 
 const IDLE: ProcState = { running: false, phase: null, progress: null, error: null, live: null };
@@ -49,6 +54,8 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const settingsRef = useRef(settings);
   const [hasKey, setHasKey] = useState(false);
+  const [hasGroqKey, setHasGroqKey] = useState(false);
+  const [tab, setTab] = useState<RightTab>("write");
   const [models, setModels] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -118,11 +125,12 @@ export default function App() {
       setSettings(s);
       const key = await api.hasApiKey();
       setHasKey(key);
+      setHasGroqKey(await api.hasGroqKey());
       const list = await api.listProjects();
       setProjects(list);
       const target = list.find((p) => p.id === s.lastProjectId) ?? list[0];
       if (target) {
-        const p = await api.loadProject(target.id);
+        const p = withSchema(await api.loadProject(target.id));
         projectRef.current = p;
         setProject(p);
       }
@@ -234,10 +242,11 @@ export default function App() {
     async (id: string) => {
       cancelRun();
       await saver.flush();
-      const p = await api.loadProject(id);
+      const p = withSchema(await api.loadProject(id));
       projectRef.current = p;
       setProject(p);
       setProc(IDLE);
+      setTab("write");
       patchSettings({ lastProjectId: id });
     },
     [cancelRun, saver, patchSettings],
@@ -310,21 +319,23 @@ export default function App() {
     if (status.s === "saved") refreshProjects();
   }, [status.s, refreshProjects]);
 
-  // ---- Kopyala ----
+  // ---- Kopyala (aktif sekmeye göre) ----
   const copy = useCallback(
     async (mode: CopyMode) => {
       const p = projectRef.current;
       if (!p) return toast("Kopyalanacak proje yok", "error");
-      const doc = getDocRef.current() ?? p.editorDoc;
-      const text = exportDoc(doc, p.imageMeta, mode);
-      if (!text.trim()) return toast("Senaryo boş", "error");
+      const timedActive = tab === "timed" && !!p.timed;
+      const text = timedActive
+        ? exportTimed(p.timed ?? null, p.imageMeta, mode)
+        : exportDoc(getDocRef.current() ?? p.editorDoc, p.imageMeta, mode);
+      if (!text.trim()) return toast(timedActive ? "Zamanlı metin boş" : "Senaryo boş", "error");
       try {
         await writeText(text);
       } catch (e) {
         toast(`Kopyalanamadı: ${e}`, "error");
       }
     },
-    [toast],
+    [toast, tab],
   );
 
   // ---- Kısayollar ----
@@ -362,6 +373,12 @@ export default function App() {
 
   const onInsights = useCallback((insights: Insight[]) => mutate((p) => ({ ...p, insights })), [mutate]);
   const onDoc = useCallback((doc: any) => mutate((p) => ({ ...p, editorDoc: doc }), false), [mutate]);
+  const onTimed = useCallback((doc: TimedDoc) => mutate((p) => ({ ...p, timed: doc })), [mutate]);
+  // Arka planda gelen sonuçlar (AI önerileri) en güncel zamanlı metne uygulanır.
+  const patchTimed = useCallback(
+    (fn: (d: TimedDoc) => TimedDoc) => mutate((p) => (p.timed ? { ...p, timed: fn(p.timed) } : p)),
+    [mutate],
+  );
   const onMeta = useCallback(
     (path: string, meta: ImageMeta | null) =>
       mutate((p) => {
@@ -399,6 +416,7 @@ export default function App() {
         onDelete={() => setDialog({ kind: "delete" })}
         onClearAll={() => setDialog({ kind: "clear" })}
         onCopy={copy}
+        copyTimed={tab === "timed"}
         onSettings={() => setShowSettings(true)}
       />
 
@@ -419,7 +437,21 @@ export default function App() {
           </div>
           <div className="divider" onPointerDown={startDrag} />
           <div className="split-right">
-            <RightPane key={project.id} project={project} onDoc={onDoc} onMeta={onMeta} onToast={toast} registerGetDoc={registerGetDoc} />
+            <RightPane
+              key={project.id}
+              project={project}
+              tab={tab}
+              onTab={setTab}
+              settings={settings}
+              hasGroqKey={hasGroqKey}
+              onOpenSettings={() => setShowSettings(true)}
+              onDoc={onDoc}
+              onTimed={onTimed}
+              onPatchTimed={patchTimed}
+              onMeta={onMeta}
+              onToast={toast}
+              registerGetDoc={registerGetDoc}
+            />
           </div>
         </main>
       ) : (
@@ -446,9 +478,11 @@ export default function App() {
           settings={settings}
           models={models}
           hasKey={hasKey}
+          hasGroqKey={hasGroqKey}
           onChange={patchSettings}
           onModels={setModels}
           onKeyChanged={setHasKey}
+          onGroqKeyChanged={setHasGroqKey}
           onClose={() => setShowSettings(false)}
         />
       )}

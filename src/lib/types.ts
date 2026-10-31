@@ -26,6 +26,21 @@ export interface ImageMeta {
   note: string;
 }
 
+/** Kelime kelime zamanlı altyazı: sırayla kelimeler, satır sonları, notlar ve resimler. */
+export type TimedItem =
+  | { k: "w"; id: string; w: string; s: number; e: number } // kelime, başlangıç/bitiş (sn)
+  | { k: "br" } // satır sonu
+  | { k: "note"; id: string; text: string } // yazarın notu
+  | { k: "img"; id: string; path: string; name: string }; // resim
+
+export interface TimedDoc {
+  source: string; // kaynak dosya adı
+  lang: string; // algılanan dil
+  items: TimedItem[];
+  /** AI'ın önerdiği düzeltmeler: kelime kimliği → önerilen metin (onaylanana kadar bekler) */
+  suggestions?: Record<string, string>;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -36,6 +51,7 @@ export interface Project {
   segments: Segment[];
   insights: Insight[];
   editorDoc: any | null; // TipTap JSON
+  timed?: TimedDoc | null;
   imageMeta: Record<string, ImageMeta>;
 }
 
@@ -64,4 +80,5 @@ export interface Settings {
   segmentTint: number;
   chunkChars: number;
   lastProjectId: string;
+  sttLanguage: string; // Groq ses→yazı dili (boşsa otomatik)
 }

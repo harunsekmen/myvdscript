@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { FONT_OPTIONS } from "../lib/fonts";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT } from "../lib/prompts";
@@ -8,11 +8,21 @@ interface Props {
   settings: Settings;
   models: string[];
   hasKey: boolean;
+  hasGroqKey: boolean;
   onChange: (patch: Partial<Settings>) => void;
   onModels: (m: string[]) => void;
   onKeyChanged: (has: boolean) => void;
+  onGroqKeyChanged: (has: boolean) => void;
   onClose: () => void;
 }
+
+type Section = "ai" | "speech" | "prompts" | "look";
+const SECTIONS: { id: Section; label: string; hint: string }[] = [
+  { id: "ai", label: "Yapay zekâ", hint: "Model ve anahtar" },
+  { id: "speech", label: "Ses → metin", hint: "Groq Whisper" },
+  { id: "prompts", label: "İstemler", hint: "AI talimatları" },
+  { id: "look", label: "Görünüm", hint: "Yazı tipi ve düzen" },
+];
 
 function ModelPicker({ value, models, onChange, placeholder }: { value: string; models: string[]; onChange: (v: string) => void; placeholder?: string }) {
   const [open, setOpen] = useState(false);
@@ -48,10 +58,43 @@ function ModelPicker({ value, models, onChange, placeholder }: { value: string; 
   );
 }
 
-export function SettingsDialog({ settings: s, models, hasKey, onChange, onModels, onKeyChanged, onClose }: Props) {
+/** Bölüm başlığı + kısa açıklama */
+function Block({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <section className="s-block">
+      <header>
+        <h4>{title}</h4>
+        {hint && <p>{hint}</p>}
+      </header>
+      <div className="s-fields">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }) {
+  return (
+    <label className="s-field">
+      <span className="s-label">
+        {label}
+        {aside}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function Status({ msg }: { msg: { text: string; err?: boolean } | null }) {
+  if (!msg) return null;
+  return <span className={"s-status " + (msg.err ? "err" : "ok")}>{msg.text}</span>;
+}
+
+export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onClose }: Props) {
+  const [section, setSection] = useState<Section>("ai");
   const [key, setKey] = useState("");
+  const [groqKey, setGroqKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
+  const [groqMsg, setGroqMsg] = useState<{ text: string; err?: boolean } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -60,10 +103,25 @@ export function SettingsDialog({ settings: s, models, hasKey, onChange, onModels
   }, [onClose]);
 
   const saveKey = async () => {
-    await api.setApiKey(key);
-    onKeyChanged(!!key.trim());
-    setKey("");
-    setMsg({ text: key.trim() ? "API anahtarı Windows Kimlik Bilgisi Yöneticisi'ne kaydedildi" : "API anahtarı silindi" });
+    try {
+      await api.setApiKey(key);
+      onKeyChanged(!!key.trim());
+      setKey("");
+      setMsg({ text: key.trim() ? "Anahtar kaydedildi (Windows Kimlik Bilgisi Yöneticisi)" : "Anahtar silindi" });
+    } catch (e) {
+      setMsg({ text: String(e), err: true });
+    }
+  };
+
+  const saveGroqKey = async () => {
+    try {
+      await api.setGroqKey(groqKey);
+      onGroqKeyChanged(!!groqKey.trim());
+      setGroqKey("");
+      setGroqMsg({ text: groqKey.trim() ? "Groq anahtarı kaydedildi" : "Groq anahtarı silindi" });
+    } catch (e) {
+      setGroqMsg({ text: String(e), err: true });
+    }
   };
 
   const fetchModels = async () => {
@@ -81,81 +139,128 @@ export function SettingsDialog({ settings: s, models, hasKey, onChange, onModels
     }
   };
 
-  const num = (k: keyof Settings, label: string, min: number, max: number, step: number, unit = "") => (
-    <label className="field">
-      <span>{label}: <b>{s[k] as number}{unit}</b></span>
+  const range = (k: keyof Settings, label: string, min: number, max: number, step: number, unit = "") => (
+    <Field label={label} aside={<b className="s-value">{s[k] as number}{unit}</b>}>
       <input type="range" min={min} max={max} step={step} value={s[k] as number} onChange={(e) => onChange({ [k]: Number(e.target.value) })} />
-    </label>
+    </Field>
   );
   const fontSel = (k: "uiFont" | "readFont" | "writeFont", label: string) => (
-    <label className="field">
-      <span>{label}</span>
+    <Field label={label}>
       <select className="input" value={s[k]} onChange={(e) => onChange({ [k]: e.target.value })}>
-        {FONT_OPTIONS.map((f) => <option key={f.label}>{f.label}</option>)}
+        {FONT_OPTIONS.map((f) => (
+          <option key={f.label}>{f.label}</option>
+        ))}
       </select>
-    </label>
+    </Field>
   );
+
+  const body: Record<Section, ReactNode> = {
+    ai: (
+      <>
+        <Block title="Bağlantı" hint="OpenAI uyumlu herhangi bir sunucu (OpenAI, DeepSeek, yerel modeller…)">
+          <Field label="API adresi">
+            <input className="input" value={s.baseUrl} onChange={(e) => onChange({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
+          </Field>
+          <Field label="API anahtarı" aside={hasKey && <span className="s-chip">kayıtlı</span>}>
+            <div className="row">
+              <input className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={hasKey ? "Değiştirmek için yeni anahtar" : "sk-…"} />
+              <button className="btn" onClick={saveKey} disabled={!key.trim() && !hasKey}>{key.trim() ? "Kaydet" : "Sil"}</button>
+            </div>
+          </Field>
+          <div className="row">
+            <button className="btn" disabled={busy} onClick={fetchModels}>{busy ? "Çekiliyor…" : "Modelleri getir"}</button>
+            <Status msg={msg} />
+          </div>
+        </Block>
+        <Block title="Modeller">
+          <Field label="Metin işleme modeli">
+            <ModelPicker value={s.model} models={models} onChange={(v) => onChange({ model: v })} />
+          </Field>
+          <Field label="Açıklama modeli" aside={<span className="s-hint">boşsa yukarıdaki</span>}>
+            <ModelPicker value={s.insightModel} models={models} onChange={(v) => onChange({ insightModel: v })} placeholder="(aynı model)" />
+          </Field>
+        </Block>
+        <Block title="Davranış">
+          {range("temperature", "Sıcaklık", 0, 1.5, 0.05)}
+          {range("chunkChars", "Parça boyutu", 2000, 20000, 500, " karakter")}
+        </Block>
+      </>
+    ),
+    speech: (
+      <>
+        <Block title="Groq API" hint="Ses ve video dosyalarını kelime zamanlı metne çevirmek için kullanılır.">
+          <Field label="Groq anahtarı" aside={hasGroqKey && <span className="s-chip">kayıtlı</span>}>
+            <div className="row">
+              <input className="input" type="password" value={groqKey} onChange={(e) => setGroqKey(e.target.value)} placeholder={hasGroqKey ? "Değiştirmek için yeni anahtar" : "gsk_…"} />
+              <button className="btn" onClick={saveGroqKey} disabled={!groqKey.trim() && !hasGroqKey}>{groqKey.trim() ? "Kaydet" : "Sil"}</button>
+            </div>
+          </Field>
+          <Status msg={groqMsg} />
+        </Block>
+        <Block title="Dil">
+          <Field label="Konuşma dili" aside={<span className="s-hint">boşsa otomatik algılanır</span>}>
+            <input className="input" value={s.sttLanguage} onChange={(e) => onChange({ sttLanguage: e.target.value.trim() })} placeholder="tr, en, de…" />
+          </Field>
+        </Block>
+      </>
+    ),
+    prompts: (
+      <>
+        <Block title="Metin işleme" hint="Altyazıyı konu konu düzenleyen ana talimat.">
+          <Field label="İstem" aside={<button className="btn small ghost" onClick={() => onChange({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}>Varsayılana dön</button>}>
+            <textarea className="input mono" rows={10} value={s.systemPrompt} onChange={(e) => onChange({ systemPrompt: e.target.value })} />
+          </Field>
+        </Block>
+        <Block title="Seçim açıklaması" hint="Metinden seçilen ifadeyi açıklayan talimat.">
+          <Field label="İstem" aside={<button className="btn small ghost" onClick={() => onChange({ insightPrompt: DEFAULT_INSIGHT_PROMPT })}>Varsayılana dön</button>}>
+            <textarea className="input mono" rows={6} value={s.insightPrompt} onChange={(e) => onChange({ insightPrompt: e.target.value })} />
+          </Field>
+        </Block>
+      </>
+    ),
+    look: (
+      <>
+        <Block title="Yazı tipleri">
+          <div className="s-grid3">
+            {fontSel("uiFont", "Arayüz")}
+            {fontSel("readFont", "Okuma")}
+            {fontSel("writeFont", "Yazma")}
+          </div>
+        </Block>
+        <Block title="Düzen">
+          {range("fontSize", "Yazı boyutu", 13, 26, 1, "px")}
+          {range("lineHeight", "Satır aralığı", 1.3, 2.2, 0.05)}
+          {range("textWidth", "Metin genişliği", 480, 1100, 20, "px")}
+          {range("splitRatio", "Sol / sağ oranı", 0.25, 0.75, 0.01)}
+          {range("segmentTint", "Segment renk yoğunluğu", 0, 0.3, 0.01)}
+        </Block>
+      </>
+    ),
+  };
+
+  const current = SECTIONS.find((x) => x.id === section)!;
 
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal settings-modal">
-        <div className="modal-head">
-          <span className="modal-title">Ayarlar</span>
-          <button className="icon-btn" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body scroll">
-          <h3>Yapay zekâ (OpenAI uyumlu)</h3>
-          <label className="field">
-            <span>API adresi (base URL)</span>
-            <input className="input" value={s.baseUrl} onChange={(e) => onChange({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
-          </label>
-          <label className="field">
-            <span>API anahtarı {hasKey && <span className="ok">● kayıtlı</span>}</span>
-            <div className="row">
-              <input className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={hasKey ? "Değiştirmek için yeni anahtar yazın" : "sk-…"} />
-              <button className="btn" onClick={saveKey} disabled={!key.trim() && !hasKey}>{key.trim() ? "Kaydet" : "Sil"}</button>
-            </div>
-          </label>
-          <div className="row">
-            <button className="btn" disabled={busy} onClick={fetchModels}>{busy ? "Çekiliyor…" : "Modelleri getir"}</button>
-            {msg && <span className={msg.err ? "err" : "muted"}>{msg.text}</span>}
+      <div className="modal settings">
+        <nav className="s-nav">
+          <div className="s-nav-title">Ayarlar</div>
+          {SECTIONS.map((x) => (
+            <button key={x.id} className={"s-nav-item" + (section === x.id ? " on" : "")} onClick={() => setSection(x.id)}>
+              <span>{x.label}</span>
+              <small>{x.hint}</small>
+            </button>
+          ))}
+          <div className="s-nav-foot muted">Değişiklikler otomatik kaydedilir</div>
+        </nav>
+        <div className="s-main">
+          <div className="s-head">
+            <h3>{current.label}</h3>
+            <button className="icon-btn" onClick={onClose} aria-label="Kapat">✕</button>
           </div>
-          <label className="field">
-            <span>Model (metin işleme)</span>
-            <ModelPicker value={s.model} models={models} onChange={(v) => onChange({ model: v })} />
-          </label>
-          <label className="field">
-            <span>Açıklama modeli (boşsa yukarıdaki kullanılır)</span>
-            <ModelPicker value={s.insightModel} models={models} onChange={(v) => onChange({ insightModel: v })} placeholder="(aynı model)" />
-          </label>
-          {num("temperature", "Sıcaklık", 0, 1.5, 0.05)}
-          {num("chunkChars", "Parça boyutu (karakter)", 2000, 20000, 500)}
-
-          <h3>Sistem istemleri</h3>
-          <label className="field">
-            <span className="row between">Metin işleme istemi
-              <button className="btn small" onClick={() => onChange({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}>Varsayılana dön</button>
-            </span>
-            <textarea className="input mono" rows={9} value={s.systemPrompt} onChange={(e) => onChange({ systemPrompt: e.target.value })} />
-          </label>
-          <label className="field">
-            <span className="row between">Açıklama (seçim) istemi
-              <button className="btn small" onClick={() => onChange({ insightPrompt: DEFAULT_INSIGHT_PROMPT })}>Varsayılana dön</button>
-            </span>
-            <textarea className="input mono" rows={5} value={s.insightPrompt} onChange={(e) => onChange({ insightPrompt: e.target.value })} />
-          </label>
-
-          <h3>Görünüm</h3>
-          <div className="grid3">
-            {fontSel("uiFont", "Arayüz fontu")}
-            {fontSel("readFont", "Okuma fontu")}
-            {fontSel("writeFont", "Yazma fontu")}
+          <div className="s-body" key={section}>
+            {body[section]}
           </div>
-          {num("fontSize", "Font boyutu", 13, 26, 1, "px")}
-          {num("lineHeight", "Satır aralığı", 1.3, 2.2, 0.05)}
-          {num("textWidth", "Metin genişliği", 480, 1100, 20, "px")}
-          {num("splitRatio", "Sol/sağ oranı", 0.25, 0.75, 0.01)}
-          {num("segmentTint", "Segment renk yoğunluğu", 0, 0.3, 0.01)}
         </div>
       </div>
     </div>

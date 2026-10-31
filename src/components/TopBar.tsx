@@ -15,6 +15,7 @@ interface Props {
   onDelete: () => void;
   onClearAll: () => void;
   onCopy: (mode: CopyMode) => Promise<void> | void;
+  copyTimed?: boolean;
   onSettings: () => void;
 }
 
@@ -74,7 +75,7 @@ export function TopBar(p: Props) {
       </div>
       <button className="btn" onClick={p.onNewFromLink}>＋ Linkten başlat</button>
       <div className="spacer" data-tauri-drag-region />
-      <CopySplitButton onCopy={p.onCopy} />
+      <CopySplitButton onCopy={p.onCopy} timed={p.copyTimed} />
       <button className="btn" onClick={p.onSettings} title="Ayarlar (Ctrl+,)">⚙ Ayarlar</button>
       <WindowControls />
     </header>
