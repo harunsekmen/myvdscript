@@ -17,6 +17,8 @@ import { LeftPane, type ProcState } from "./components/LeftPane";
 import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TopBar } from "./components/TopBar";
+import { SubtitlePicker } from "./components/SubtitlePicker";
+import type { SubOption, SubtitleList } from "./lib/api";
 
 const DEFAULTS: Settings = {
   baseUrl: "https://api.openai.com/v1",
@@ -65,6 +67,8 @@ export default function App() {
   const [proc, setProc] = useState<ProcState>(IDLE);
   const runRef = useRef<PipelineRun | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
+  // Linkten gelen videonun altyazı seçimi bekleniyor mu?
+  const [subPick, setSubPick] = useState<{ url: string; list: SubtitleList } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [openSignal, setOpenSignal] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -213,17 +217,37 @@ export default function App() {
     [mutate],
   );
 
+  // Adım 1: videonun altyazılarını listele; kullanıcı seçim penceresinde seçer (varsayılan İngilizce).
   const fetchAndProcess = useCallback(
     async (url: string) => {
       const pid = projectRef.current?.id;
       setProc({ running: true, phase: "transcript", progress: null, error: null, live: null });
       try {
-        const tr = await api.fetchTranscript(url);
+        const list = await api.listSubtitles(url);
+        if (projectRef.current?.id !== pid) return;
+        setProc(IDLE);
+        setSubPick({ url, list });
+      } catch (e: any) {
+        if (projectRef.current?.id !== pid) return;
+        setProc({ ...IDLE, error: String(e?.message ?? e) });
+      }
+    },
+    [],
+  );
+
+  // Adım 2: kullanıcının seçtiği altyazıyı indir ve AI ile işle.
+  const downloadSubtitle = useCallback(
+    async (url: string, videoTitle: string, opt: SubOption) => {
+      const pid = projectRef.current?.id;
+      setSubPick(null);
+      setProc({ running: true, phase: "transcript", progress: null, error: null, live: null });
+      try {
+        const tr = await api.fetchTranscript(url, opt.lang, opt.auto);
         if (projectRef.current?.id !== pid) return;
         mutate((p) => ({
           ...p,
           url,
-          title: NEW_TITLES.includes(p.title) ? tr.title : p.title,
+          title: NEW_TITLES.includes(p.title) ? videoTitle : p.title,
           transcriptRaw: tr.text,
         }));
         refreshProjects();
@@ -241,6 +265,7 @@ export default function App() {
   const openProject = useCallback(
     async (id: string) => {
       cancelRun();
+      setSubPick(null);
       await saver.flush();
       const p = withSchema(await api.loadProject(id));
       projectRef.current = p;
@@ -484,6 +509,14 @@ export default function App() {
           onKeyChanged={setHasKey}
           onGroqKeyChanged={setHasGroqKey}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {subPick && (
+        <SubtitlePicker
+          title={subPick.list.title}
+          options={subPick.list.options}
+          onConfirm={(opt) => downloadSubtitle(subPick.url, subPick.list.title, opt)}
+          onCancel={() => setSubPick(null)}
         />
       )}
       {dialog?.kind === "link" && (

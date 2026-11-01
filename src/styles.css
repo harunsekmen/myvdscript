@@ -367,3 +367,17 @@ mark.hl:hover { background: #f2b44d55; }
 .timed-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .timed-wrap > .timed { flex: 1; min-height: 0; }
 .timed-foot { flex-shrink: 0; margin: 0; padding: 7px 16px; border-top: 1px solid var(--line); background: var(--bg); font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Altyazı seçim penceresi */
+.sub-modal { width: min(560px, 100%); max-height: min(640px, 100%); }
+.sub-video { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub-group { margin-top: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.sub-list { display: flex; flex-direction: column; gap: 2px; }
+.sub-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.sub-row:hover { background: var(--bg-3); }
+.sub-row.selected { border-color: var(--accent); background: var(--bg-3); }
+.sub-radio { flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.sub-row.selected .sub-radio { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 45%, transparent 50%); }
+.sub-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-code { color: var(--muted); font-size: 12px; }
+.sub-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--accent-2); color: #fff; }

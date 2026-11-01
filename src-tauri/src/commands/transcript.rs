@@ -5,10 +5,23 @@ use crate::ytdlp;
 
 #[derive(Serialize)]
 pub struct Transcript {
-    pub title: String,
     pub lang: String,
     pub auto: bool,
     pub text: String,
+}
+
+/// Videoda bulunan bir altyazı seçeneği (elle yazılmış veya otomatik).
+#[derive(Serialize)]
+pub struct SubOption {
+    pub lang: String,
+    pub name: String,
+    pub auto: bool,
+}
+
+#[derive(Serialize)]
+pub struct SubtitleList {
+    pub title: String,
+    pub options: Vec<SubOption>,
 }
 
 fn collapse_ws(s: &str) -> String {
@@ -65,60 +78,66 @@ pub fn parse_vtt(src: &str) -> String {
     lines.join(" ")
 }
 
-fn pick_lang(keys: &[String], original: &str) -> Option<String> {
-    let has = |k: &str| keys.iter().any(|x| x == k);
-    for cand in ["tr", original, "en"] {
-        if !cand.is_empty() && has(cand) {
-            return Some(cand.to_string());
-        }
-    }
-    keys.first().cloned()
-}
-
-fn keys_of(v: &Value) -> Vec<String> {
-    v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default()
-}
-
-#[tauri::command]
-pub async fn fetch_transcript(url: String) -> Result<Transcript, String> {
+fn check_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http") {
         return Err("Geçerli bir video bağlantısı girin".into());
     }
-    let run = ytdlp::run;
+    Ok(())
+}
 
-    let info_out = run(vec![
+async fn video_info(url: &str) -> Result<Value, String> {
+    let out = ytdlp::run(vec![
         "--skip-download".into(),
         "--dump-single-json".into(),
         "--no-warnings".into(),
         "--no-playlist".into(),
-        url.clone(),
+        url.to_string(),
     ])
     .await?;
-    if !info_out.status.success() {
-        let err = String::from_utf8_lossy(&info_out.stderr);
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!("Video bilgisi alınamadı: {}", err.lines().last().unwrap_or("bilinmeyen hata")));
     }
-    let info: Value = serde_json::from_slice(&info_out.stdout).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+}
+
+/// yt-dlp'nin `subtitles` / `automatic_captions` sözlüğünden seçenekleri çıkarır.
+fn sub_options(v: &Value, auto: bool) -> Vec<SubOption> {
+    let Some(obj) = v.as_object() else { return vec![] };
+    let mut out: Vec<SubOption> = obj
+        .iter()
+        .map(|(lang, formats)| {
+            let name = formats
+                .as_array()
+                .and_then(|a| a.iter().find_map(|f| f["name"].as_str()))
+                .unwrap_or(lang.as_str())
+                .to_string();
+            SubOption { lang: lang.clone(), name, auto }
+        })
+        .collect();
+    out.sort_by(|a, b| a.lang.cmp(&b.lang));
+    out
+}
+
+/// Videodaki tüm altyazıları listeler: önce elle yazılmış, sonra otomatik.
+#[tauri::command]
+pub async fn list_subtitles(url: String) -> Result<SubtitleList, String> {
+    check_url(&url)?;
+    let info = video_info(&url).await?;
     let title = info["title"].as_str().unwrap_or("Başlıksız").to_string();
-    let original = info["language"].as_str().unwrap_or("").to_string();
+    let mut options = sub_options(&info["subtitles"], false);
+    options.extend(sub_options(&info["automatic_captions"], true));
+    if options.is_empty() {
+        return Err("Bu videoda altyazı bulunamadı".into());
+    }
+    Ok(SubtitleList { title, options })
+}
 
-    let manual = keys_of(&info["subtitles"]);
-    let auto_all = keys_of(&info["automatic_captions"]);
-
-    let (lang, is_auto) = if let Some(l) = pick_lang(&manual, &original) {
-        (l, false)
-    } else {
-        // Oto-altyazıda "tr" çoğunlukla makine çevirisidir; önce videonun kendi dilini tercih et.
-        let orig_key = auto_all
-            .iter()
-            .find(|k| k.ends_with("-orig"))
-            .cloned()
-            .or_else(|| if auto_all.contains(&original) { Some(original.clone()) } else { None });
-        let l = orig_key
-            .or_else(|| pick_lang(&auto_all, &original))
-            .ok_or("Bu videoda altyazı bulunamadı")?;
-        (l, true)
-    };
+/// Kullanıcının seçtiği tek bir altyazıyı indirip düz metne çevirir.
+#[tauri::command]
+pub async fn fetch_transcript(url: String, lang: String, auto: bool) -> Result<Transcript, String> {
+    check_url(&url)?;
+    let run = ytdlp::run;
 
     let dir = std::env::temp_dir().join(format!("sa-sub-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -127,7 +146,7 @@ pub async fn fetch_transcript(url: String) -> Result<Transcript, String> {
         "--skip-download".into(),
         "--no-warnings".into(),
         "--no-playlist".into(),
-        if is_auto { "--write-auto-subs".into() } else { "--write-subs".into() },
+        if auto { "--write-auto-subs".into() } else { "--write-subs".into() },
         "--sub-langs".into(),
         lang.clone(),
         "--sub-format".into(),
@@ -162,7 +181,7 @@ pub async fn fetch_transcript(url: String) -> Result<Transcript, String> {
             String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
         )
     })?;
-    Ok(Transcript { title, lang, auto: is_auto, text })
+    Ok(Transcript { lang, auto, text })
 }
 
 #[cfg(test)]
@@ -190,10 +209,17 @@ mod tests {
     }
 
     #[test]
-    fn lang_priority() {
-        let k = vec!["en".to_string(), "de".to_string()];
-        assert_eq!(pick_lang(&k, "de").unwrap(), "de");
-        let k = vec!["en".to_string(), "tr".to_string()];
-        assert_eq!(pick_lang(&k, "de").unwrap(), "tr");
+    fn sub_options_lists_manual_and_auto() {
+        let v: Value = serde_json::from_str(
+            r#"{"tr":[{"ext":"vtt","name":"Türkçe"}],"en":[{"ext":"vtt"}]}"#,
+        )
+        .unwrap();
+        let opts = sub_options(&v, false);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0].lang, "en");
+        assert_eq!(opts[0].name, "en"); // isim yoksa dil kodu kullanılır
+        assert_eq!(opts[1].name, "Türkçe");
+        assert!(opts.iter().all(|o| !o.auto));
+        assert!(sub_options(&Value::Null, true).is_empty());
     }
 }

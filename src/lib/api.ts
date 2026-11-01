@@ -3,10 +3,21 @@ import { listen } from "@tauri-apps/api/event";
 import type { Project, ProjectMeta, Settings } from "./types";
 
 export interface Transcript {
-  title: string;
   lang: string;
   auto: boolean;
   text: string;
+}
+
+/** Videodaki bir altyazı seçeneği; auto = otomatik (oto-çeviri dahil). */
+export interface SubOption {
+  lang: string;
+  name: string;
+  auto: boolean;
+}
+
+export interface SubtitleList {
+  title: string;
+  options: SubOption[];
 }
 
 export interface MediaWord {
@@ -41,7 +52,9 @@ export const api = {
   setGroqKey: (key: string) => invoke<void>("set_groq_key", { key }),
   transcribeMedia: (path: string, language: string) =>
     invoke<MediaTranscript>("transcribe_media", { path, language }),
-  fetchTranscript: (url: string) => invoke<Transcript>("fetch_transcript", { url }),
+  listSubtitles: (url: string) => invoke<SubtitleList>("list_subtitles", { url }),
+  fetchTranscript: (url: string, lang: string, auto: boolean) =>
+    invoke<Transcript>("fetch_transcript", { url, lang, auto }),
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };

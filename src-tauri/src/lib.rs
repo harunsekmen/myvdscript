@@ -39,6 +39,7 @@ pub fn run() {
             settings::has_groq_key,
             settings::set_groq_key,
             stt::transcribe_media,
+            transcript::list_subtitles,
             transcript::fetch_transcript,
             ai::list_models,
             ai::ai_stream,
