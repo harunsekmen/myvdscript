@@ -8,7 +8,7 @@ interface Speech {
 let player: HTMLAudioElement | null = null;
 const cache = new Map<string, Speech>();
 
-function stop() {
+export function stop() {
   player?.pause();
   player = null;
   window.speechSynthesis?.cancel();

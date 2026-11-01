@@ -6,7 +6,8 @@ import { createAutosaver, type SaveStatus } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
 import { processTranscript, type PipelineRun } from "./lib/pipeline";
-import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
+import { buildCustomRunSystemPrompt, DEFAULT_INSIGHT_PROMPT, DEFAULT_STYLE_GUIDE, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
+import { segmentsToMarkdown } from "./lib/segmentParser";
 import { exportTimed, normalizeTimed } from "./lib/timed";
 import type { ImageMeta, Insight, Project, ProjectMeta, Segment, Settings, TimedDoc } from "./lib/types";
 
@@ -27,6 +28,8 @@ const DEFAULTS: Settings = {
   temperature: 0.3,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   insightPrompt: DEFAULT_INSIGHT_PROMPT,
+  styleGuide: DEFAULT_STYLE_GUIDE,
+  styleExamples: [],
   uiFont: "Inter",
   readFont: "Source Serif 4",
   writeFont: "Literata",
@@ -38,6 +41,7 @@ const DEFAULTS: Settings = {
   chunkChars: 6000,
   lastProjectId: "",
   sttLanguage: "",
+  cookiesBrowser: "",
 };
 
 const IDLE: ProcState = { running: false, phase: null, progress: null, error: null, live: null };
@@ -125,7 +129,7 @@ export default function App() {
       const s: Settings = { ...DEFAULTS, ...loaded };
       if (!s.systemPrompt.trim() || LEGACY_SYSTEM_PROMPTS.includes(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       if (!s.insightPrompt.trim()) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
-      settingsRef.current = s;
+      if (!s.styleGuide?.trim()) s.styleGuide = DEFAULT_STYLE_GUIDE;      settingsRef.current = s;
       setSettings(s);
       const key = await api.hasApiKey();
       setHasKey(key);
@@ -180,9 +184,13 @@ export default function App() {
   }, []);
 
   const runAi = useCallback(
-    async (text: string) => {
+    async (text: string, customPrompt?: string) => {
       const pid = projectRef.current?.id;
-      const s = settingsRef.current;
+      // Özel istem: temel sistem istemi korunur, kullanıcının istemi ek talimat olarak eklenir.
+      // Anlatım tarzı ve örnek çiftleri processTranscript içinde (buildSystemWithStyle) her işleme eklenir.
+      const s = customPrompt
+        ? { ...settingsRef.current, systemPrompt: buildCustomRunSystemPrompt(settingsRef.current.systemPrompt, customPrompt) }
+        : settingsRef.current;
       if (!s.model) {
         setProc({ ...IDLE, error: "Önce Ayarlar'dan bir model seçin." });
         setShowSettings(true);
@@ -217,22 +225,32 @@ export default function App() {
     [mutate],
   );
 
-  // Adım 1: videonun altyazılarını listele; kullanıcı seçim penceresinde seçer (varsayılan İngilizce).
+  // Tek adım: altyazıyı al (sıra: İngilizce > Türkçe > diğer) ve AI ile işle. Ek liste isteği yok.
   const fetchAndProcess = useCallback(
-    async (url: string) => {
+    async (url: string, manualTitle?: string) => {
       const pid = projectRef.current?.id;
+      setSubPick(null);
       setProc({ running: true, phase: "transcript", progress: null, error: null, live: null });
       try {
-        const list = await api.listSubtitles(url);
+        const tr = await api.fetchDefaultTranscript(url);
         if (projectRef.current?.id !== pid) return;
-        setProc(IDLE);
-        setSubPick({ url, list });
+        // Başlık: kullanıcı girdiyse o; yoksa altyazı çağrısının döndürdüğü başlık.
+        const title = manualTitle?.trim() || tr.title?.trim() || "";
+        mutate((p) => ({
+          ...p,
+          url,
+          transcriptRaw: tr.text,
+          title: title && NEW_TITLES.includes(p.title) ? title : p.title,
+        }));
+        refreshProjects();
+        toast(`Altyazı alındı (${tr.lang})`);
+        await runAi(tr.text);
       } catch (e: any) {
         if (projectRef.current?.id !== pid) return;
         setProc({ ...IDLE, error: String(e?.message ?? e) });
       }
     },
-    [],
+    [mutate, runAi, refreshProjects, toast],
   );
 
   // Adım 2: kullanıcının seçtiği altyazıyı indir ve AI ile işle.
@@ -455,8 +473,9 @@ export default function App() {
               proc={proc}
               onInsights={onInsights}
               onReprocess={() => runAi(project.transcriptRaw)}
+              onCustomRun={(prompt) => runAi(project.transcriptRaw || segmentsToMarkdown(project.segments), prompt)}
               onCancel={cancelRun}
-              onFetchUrl={(url) => fetchAndProcess(url)}
+              onFetchUrl={(url, title) => fetchAndProcess(url, title)}
               onToast={toast}
             />
           </div>

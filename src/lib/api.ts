@@ -6,6 +6,7 @@ export interface Transcript {
   lang: string;
   auto: boolean;
   text: string;
+  title?: string | null;
 }
 
 /** Videodaki bir altyazı seçeneği; auto = otomatik (oto-çeviri dahil). */
@@ -53,9 +54,12 @@ export const api = {
   transcribeMedia: (path: string, language: string) =>
     invoke<MediaTranscript>("transcribe_media", { path, language }),
   listSubtitles: (url: string) => invoke<SubtitleList>("list_subtitles", { url }),
+  fetchDefaultTranscript: (url: string) => invoke<Transcript>("fetch_default_transcript", { url }),
   fetchTranscript: (url: string, lang: string, auto: boolean) =>
     invoke<Transcript>("fetch_transcript", { url, lang, auto }),
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
+  ensureAudio: (projectId: string, url: string) => invoke<string>("ensure_audio", { projectId, url }),
+  readAudio: (path: string) => invoke<ArrayBuffer>("read_audio", { path }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };
@@ -126,4 +130,9 @@ export class CancelledError extends Error {
   constructor() {
     super("İptal edildi");
   }
+}
+
+/** yt-dlp'nin durum mesajlarını (bağlanma, yeniden deneme) dinler. */
+export function onYtdlpStatus(cb: (msg: string) => void) {
+  return listen<string>("ytdlp-status", (e) => cb(e.payload));
 }

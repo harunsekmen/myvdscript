@@ -71,3 +71,43 @@ export function TextDialog(p: {
     </div>
   );
 }
+
+export function PromptDialog(p: {
+  title: string;
+  hint?: string;
+  placeholder?: string;
+  confirmLabel: string;
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState("");
+  useEsc(p.onCancel);
+  const submit = () => v.trim() && p.onSubmit(v.trim());
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && p.onCancel()}>
+      <div className="modal prompt-modal">
+        <div className="modal-head"><span className="modal-title">{p.title}</span></div>
+        <div className="modal-body">
+          {p.hint && <p className="muted">{p.hint}</p>}
+          <textarea
+            className="input mono"
+            rows={8}
+            autoFocus
+            placeholder={p.placeholder}
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
+            }}
+          />
+        </div>
+        <div className="modal-foot">
+          <button className="btn" onClick={p.onCancel}>Vazgeç</button>
+          <button className="btn primary" disabled={!v.trim()} onClick={submit}>
+            {p.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

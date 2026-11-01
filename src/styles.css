@@ -152,6 +152,7 @@ mark.hl:hover { background: #f2b44d55; }
 .modal-back { position: fixed; inset: 0; background: #000a; z-index: 100; display: grid; place-items: center; padding: 24px; }
 .modal { background: var(--bg-2); border: 1px solid #3a3f55; border-radius: 14px; box-shadow: 0 24px 60px #000b; display: flex; flex-direction: column; max-height: 100%; }
 .small-modal { width: 420px; }
+.prompt-modal { width: min(560px, 100%); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .modal-title { font-weight: 600; }
 .modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -392,3 +393,37 @@ mark.hl:hover { background: #f2b44d55; }
 .sub-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub-code { color: var(--muted); font-size: 12px; }
 .sub-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--accent-2); color: #fff; }
+
+/* Orijinal ses oynatıcısı (sol panel) */
+/* Orijinal ses oynatıcısı: panel başlığıyla aynı düz dil (--line, --bg-3, --accent) */
+.orig-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--bg-2); font-size: 12.5px; min-height: 44px; }
+.orig-play { flex: none; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-3); color: var(--text); font-size: 11px; display: grid; place-items: center; cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.orig-play:hover:not(:disabled) { background: #2b2f3e; border-color: #3a3f55; }
+.orig-play.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.orig-play:disabled { opacity: .45; cursor: default; }
+.orig-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.orig-en { font-style: italic; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
+.orig-seek { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--accent) var(--p, 0%), var(--bg-3) var(--p, 0%)); }
+.orig-seek:disabled { cursor: default; opacity: .45; }
+.orig-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--text); border: none; }
+.orig-seek::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: transparent; }
+.orig-seek::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--text); }
+.orig-seek::-moz-range-track { height: 4px; border-radius: 999px; background: transparent; }
+.orig-seek::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+.orig-time { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; font-size: 12px; }
+.orig-close { flex: none; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 4px 6px; border-radius: 6px; }
+.orig-close:hover { color: var(--text); background: var(--bg-3); }
+.orig-err { color: #ff8a8a; white-space: nowrap; }
+/* Çalan cümlenin vurgusu (yalnızca ses çalarken); tek tık metin seçimi içindir, çift tık oynatır */
+.reader-scroll span[data-t] { border-radius: 6px; transition: background .18s; }
+.reader-scroll span.cur { background: #6c8cff40; color: #fff; }
+.ytdlp-note { padding: 4px 12px; font-size: 12.5px; }
+.s-examples { display: flex; flex-direction: column; gap: 10px; }
+.s-example { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: start; }
+.s-example .btn { align-self: center; }
+.s-cands { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; border: 1px solid var(--border, #ffffff1a); border-radius: 8px; padding: 6px; }
+.s-cand { display: flex; gap: 8px; align-items: flex-start; padding: 6px; border-radius: 6px; cursor: pointer; }
+.s-cand:hover { background: #ffffff0d; }
+.s-cand-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.s-cand-src { color: var(--muted); font-size: 12.5px; }
+.s-cand-tgt { font-size: 13px; }

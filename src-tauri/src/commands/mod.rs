@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod external;
 pub mod images;
+pub mod media;
 pub mod projects;
 pub mod settings;
 pub mod stt;

@@ -7,3 +7,8 @@ build.log
 dev.log
 plans
 Portable
+
+# yerel araç/indeks ve test kalıntıları
+.codegraph/
+_subs_tmp/
+build-portable.log

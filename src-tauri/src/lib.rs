@@ -2,7 +2,7 @@ mod commands;
 mod store;
 mod ytdlp;
 
-use commands::{ai, external, images, projects, settings, stt, transcript, tts};
+use commands::{ai, external, images, media, projects, settings, stt, transcript, tts};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,8 +18,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(ai::AiState::default())
         .setup(|app| {
+            let _ = ytdlp::APP.set(app.handle().clone());
             let appdata = app.path().data_dir().map_err(|e| e.to_string())?;
-            store::init(store::pick_root(appdata));
+            let root = store::pick_root(appdata);
+            store::migrate_from_exe_dir(&root);
+            store::init(root);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -41,10 +44,13 @@ pub fn run() {
             stt::transcribe_media,
             transcript::list_subtitles,
             transcript::fetch_transcript,
+            transcript::fetch_default_transcript,
             ai::list_models,
             ai::ai_stream,
             ai::ai_cancel,
             tts::tts,
+            media::ensure_audio,
+            media::read_audio,
             external::open_external,
         ])
         .run(tauri::generate_context!())

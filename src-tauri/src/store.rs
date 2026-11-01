@@ -6,21 +6,52 @@ use std::{
 
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-/// Release'te veriler exe'nin yanındaki `ScriptAtolyesi` klasörüne yazılır (taşınabilir);
-/// klasör yazılamıyorsa (ör. Program Files) ve dev derlemesinde %APPDATA% kullanılır.
+/// Veriler her zaman %APPDATA%\ScriptAtolyesi altında tutulur. Exe'nin yanına yazmak, aynı uygulamanın
+/// farklı kopyalarının (geliştirme derlemesi, Portable, Programlar) farklı ayarları görmesine yol açıyordu.
 pub fn pick_root(app_data: PathBuf) -> PathBuf {
-    if !cfg!(debug_assertions) {
-        if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("ScriptAtolyesi"))) {
-            if fs::create_dir_all(&dir).is_ok() {
-                let probe = dir.join(".write-test");
-                if fs::write(&probe, b"x").is_ok() {
-                    let _ = fs::remove_file(probe);
-                    return dir;
-                }
-            }
+    app_data.join("ScriptAtolyesi")
+}
+
+/// Eski sürümler veriyi exe'nin yanındaki `ScriptAtolyesi` klasörüne yazıyordu.
+/// Bir kez çalışır: ayarlar ve projeler yeni köke kopyalanır (mevcut ayar `settings.json.bak` olur).
+pub fn migrate_from_exe_dir(root: &Path) {
+    let marker = root.join(".migrated-from-exe-dir");
+    if marker.exists() {
+        return;
+    }
+    let Some(src) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("ScriptAtolyesi"))) else {
+        return;
+    };
+    if !src.join("settings.json").exists() && !src.join("projects").exists() {
+        return;
+    }
+    let _ = fs::create_dir_all(root);
+    let settings = src.join("settings.json");
+    if settings.exists() {
+        let dest = root.join("settings.json");
+        if dest.exists() {
+            let _ = fs::copy(&dest, root.join("settings.json.bak"));
+        }
+        let _ = fs::copy(&settings, &dest);
+    }
+    let _ = copy_missing_dirs(&src.join("projects"), &root.join("projects"));
+    let _ = fs::write(&marker, format!("{}\n", src.display()));
+}
+
+/// `src` altındaki klasörleri `dst`'ye kopyalar; hedefte zaten olan dosyalara dokunmaz.
+fn copy_missing_dirs(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let Ok(rd) = fs::read_dir(src) else { return Ok(()) };
+    fs::create_dir_all(dst)?;
+    for entry in rd.flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_missing_dirs(&from, &to)?;
+        } else if !to.exists() {
+            fs::copy(&from, &to)?;
         }
     }
-    app_data.join("ScriptAtolyesi")
+    Ok(())
 }
 
 pub fn init(root: PathBuf) {

@@ -1,7 +1,15 @@
+/** Bir cümlenin orijinal videodaki başlangıcı: paragraf sırası, paragraf içi karakter konumu, saniye. */
+export interface SentenceMark {
+  para: number;
+  start: number;
+  t: number;
+}
+
 export interface Segment {
   id: string;
   title: string;
   text: string; // paragraflar boş satırla ayrılır
+  marks?: SentenceMark[]; // cümle zamanları (AI zaman işaretlerinden); yoksa orijinal ses çalınmaz
 }
 
 export interface InsightResult {
@@ -63,6 +71,12 @@ export interface ProjectMeta {
   updatedAt: number;
 }
 
+/** Anlatım tarzı için bir örnek çifti: kaynak metin ve kullanıcının istediği Türkçe çıktı. */
+export interface StyleExample {
+  source: string;
+  target: string;
+}
+
 export interface Settings {
   baseUrl: string;
   model: string;
@@ -70,6 +84,8 @@ export interface Settings {
   temperature: number;
   systemPrompt: string;
   insightPrompt: string;
+  styleGuide: string; // anlatım tarzı kılavuzu (boşsa eklenmez)
+  styleExamples: StyleExample[]; // kaynak → Türkçe örnek çiftleri (en fazla 5)
   uiFont: string;
   readFont: string;
   writeFont: string;
@@ -81,4 +97,5 @@ export interface Settings {
   chunkChars: number;
   lastProjectId: string;
   sttLanguage: string; // Groq ses→yazı dili (boşsa otomatik)
+  cookiesBrowser: string; // yt-dlp çerez kaynağı: "" (yok) veya "firefox"
 }
