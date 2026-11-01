@@ -56,6 +56,7 @@ export const api = {
   fetchTranscript: (url: string, lang: string, auto: boolean) =>
     invoke<Transcript>("fetch_transcript", { url, lang, auto }),
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
+  openExternal: (url: string) => invoke<void>("open_external", { url }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };
 

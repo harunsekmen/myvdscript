@@ -12,6 +12,7 @@ import type { ImageMeta, Project, Settings, TimedDoc } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
 import { ImageViewer } from "./ImageViewer";
 import { ConfirmDialog } from "./Dialogs";
+import { SpeakIcon } from "./SpeakIcon";
 import { TimedPane } from "./TimedPane";
 
 export type RightTab = "write" | "timed";
@@ -33,13 +34,6 @@ interface Props {
 
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "webm", "ogg", "flac", "mpeg", "mpga"];
-
-const SpeakIcon = () => (
-  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" fillOpacity=".25" />
-    <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
-  </svg>
-);
 
 export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);

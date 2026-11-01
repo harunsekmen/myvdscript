@@ -107,8 +107,17 @@ textarea.input { resize: vertical; }
 .empty p { margin: 0; }
 mark.hl { background: #f2b44d33; color: inherit; border-bottom: 1px dashed #f2b44d; border-radius: 2px; cursor: pointer; }
 mark.hl:hover { background: #f2b44d55; }
-.sel-pop { position: fixed; z-index: 60; background: var(--accent-2); color: #fff; border: none; border-radius: 8px; padding: 5px 12px; font-size: 13px; box-shadow: 0 6px 18px #0008; }
-.sel-pop:hover { background: var(--accent); }
+.sel-pop { position: fixed; z-index: 60; display: flex; gap: 4px; transform: translateX(-50%); }
+.sel-pop button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; background: var(--accent-2); color: #fff; border: none; border-radius: 8px; padding: 5px 12px; font-size: 13px; box-shadow: 0 6px 18px #0008; }
+.sel-pop button:hover { background: var(--accent); }
+.sel-pop button.speak { background: #262c47; color: #c9d3ff; border: 1px solid #3b4678; }
+.sel-pop button.speak:hover { background: var(--accent-2); color: #fff; border-color: var(--accent); }
+.video-link { color: #b9c6ff; white-space: nowrap; }
+.start-empty { width: min(560px, 100%); margin: 0 auto; padding: 56px 24px; gap: 12px; align-items: stretch; }
+.start-title { font-size: 16px; font-weight: 600; }
+.link-start { display: flex; gap: 8px; align-items: center; text-align: left; }
+.link-start .input { flex: 1; min-width: 0; padding: 9px 12px; }
+.link-start .btn { flex-shrink: 0; padding: 9px 18px; }
 
 /* Insight kartı */
 .insight-card { position: fixed; z-index: 70; background: #20232f; border: 1px solid #3a3f55; border-radius: 12px; box-shadow: 0 16px 40px #000a; display: flex; flex-direction: column; max-height: 330px; }

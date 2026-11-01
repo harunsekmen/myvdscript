@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { streamChat } from "../lib/api";
+import { api, streamChat } from "../lib/api";
 import { segStyle } from "../lib/colors";
 import { buildInsightMessage } from "../lib/prompts";
 import { paragraphsOf } from "../lib/segmentParser";
+import { speak } from "../lib/speech";
 import type { Insight, Project, Segment, Settings } from "../lib/types";
 import type { Progress } from "../lib/pipeline";
 import { InsightCard } from "./InsightCard";
+import { SpeakIcon } from "./SpeakIcon";
+
+/** Seslendirme tek seferde en fazla bu kadar karakteri okur (sağ panelle aynı sınır). */
+const SPEAK_MAX_CHARS = 200;
 
 export interface ProcState {
   running: boolean;
@@ -171,6 +176,19 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     runInsight(insight, settings.insightModel || settings.model, sel.context);
   };
 
+  const speakSel = () => {
+    if (!sel) return;
+    void speak(sel.quote).then((ok) => ok || onToast("Ses çalınamadı (internet bağlantısını kontrol et)", "error"));
+  };
+
+  const openVideo = () => {
+    api.openExternal(project.url).catch((e) => onToast(`Video açılamadı: ${e}`, "error"));
+  };
+  const hasVideo = /^https?:\/\//.test(project.url);
+
+  // Seçim balonu ekranın dışına taşmasın diye yatay konumu sınırlanır (iki düğme ~170px).
+  const selLeft = sel ? Math.min(Math.max(sel.rect.left + sel.rect.width / 2, 96), window.innerWidth - 96) : 0;
+
   const contextOf = (i: Insight) => {
     const list = paras.get(i.segmentId) ?? [];
     return [list[i.para - 1], list[i.para], list[i.para + 1]].filter(Boolean).join("\n\n");
@@ -221,6 +239,11 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     <div className="pane left-pane">
       <div className="pane-head">
         <span className="pane-title">Kaynak metin</span>
+        {hasVideo && (
+          <button className="btn small video-link" onClick={openVideo} title={project.url}>
+            ▶ Videoyu aç
+          </button>
+        )}
         {proc.running ? (
           <>
             <span className="muted">
@@ -273,13 +296,14 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
         >
           <div className="reader-col">
             {segments.length === 0 && !proc.running && (
-              <div className="empty">
-                <p>Henüz kaynak metin yok.</p>
+              <div className="empty start-empty">
+                <p className="start-title">Henüz kaynak metin yok</p>
                 <p className="muted">Bir YouTube bağlantısı yapıştırın; altyazı çekilip Türkçe'ye düzenlenecek.</p>
-                <div className="row">
+                <div className="link-start">
                   <input
                     className="input"
                     placeholder="https://www.youtube.com/watch?v=…"
+                    spellCheck={false}
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && url.trim() && onFetchUrl(url.trim())}
@@ -312,14 +336,19 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
       </div>
 
       {sel && (
-        <button
+        <div
           className="sel-pop"
-          style={{ left: Math.max(8, sel.rect.left + sel.rect.width / 2 - 45), top: Math.max(8, sel.rect.top - 40) }}
+          style={{ left: selLeft, top: Math.max(8, sel.rect.top - 40) }}
           onMouseDown={(e) => e.preventDefault()}
-          onClick={explain}
         >
-          ✦ Açıkla
-        </button>
+          <button onClick={explain}>✦ Açıkla</button>
+          {sel.quote.length <= SPEAK_MAX_CHARS && /\p{L}/u.test(sel.quote) && (
+            <button className="speak" onClick={speakSel} title="Seçili metni dinle" aria-label="Seçili metni dinle">
+              <SpeakIcon />
+              <span>Seslendir</span>
+            </button>
+          )}
+        </div>
       )}
 
       {active && (
