@@ -161,7 +161,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
             ))}
           </div>
         </div>
-        <div className="vp-cue" title={cue}>{cue || (ready ? "Çalarken orijinal altyazı burada görünür" : "Video yükleniyor…")}</div>
+        <div className="vp-cue">{cue || (ready ? "Çalarken orijinal altyazı burada görünür" : "Video yükleniyor…")}</div>
 
         <div className="video-info">
           <div className="video-head">

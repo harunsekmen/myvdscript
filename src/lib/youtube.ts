@@ -30,6 +30,8 @@ let st: VideoState = IDLE;
 const listeners = new Set<() => void>();
 let frame: HTMLIFrameElement | null = null;
 let pending: { from: number; to?: number } | null = null;
+// Cümle sonunda kendimiz duraklatırız (YouTube'un endSeconds'ı "bitti" ekranını açıyor).
+let stopAt: number | null = null;
 let listening = false;
 
 function set(p: Partial<VideoState>) {
@@ -49,7 +51,8 @@ const handshake = () => send({ event: "listening", id: 1, channel: "widget" });
 
 function load(from: number, to?: number) {
   if (!st.videoId) return;
-  command("loadVideoById", [{ videoId: st.videoId, startSeconds: Math.max(0, from), ...(to != null ? { endSeconds: to } : {}) }]);
+  stopAt = to ?? null;
+  command("loadVideoById", [{ videoId: st.videoId, startSeconds: Math.max(0, from) }]);
 }
 
 function onMessage(e: MessageEvent) {
@@ -76,6 +79,10 @@ function onMessage(e: MessageEvent) {
     if (typeof d.info.currentTime === "number") p.time = d.info.currentTime;
     if (typeof d.info.playerState === "number") p.playing = d.info.playerState === 1 || d.info.playerState === 3;
     if (Object.keys(p).length) set(p);
+    if (stopAt != null && typeof p.time === "number" && p.time >= stopAt - 0.05 && p.time < stopAt + 5) {
+      stopAt = null;
+      command("pauseVideo");
+    }
   }
 }
 
@@ -83,6 +90,7 @@ function onMessage(e: MessageEvent) {
 export function attachFrame(f: HTMLIFrameElement, videoId: string): () => void {
   frame = f;
   pending = null;
+  stopAt = null;
   set({ ...IDLE, videoId });
   if (!listening) {
     window.addEventListener("message", onMessage);
@@ -109,6 +117,7 @@ export function playAt(from: number, to?: number | null) {
 }
 
 export function pauseVideo() {
+  stopAt = null;
   command("pauseVideo");
 }
 
