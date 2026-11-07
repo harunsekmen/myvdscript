@@ -165,7 +165,7 @@ mark.hl:hover { background: #f2b44d55; }
 .model-list { top: calc(100% + 4px); width: 100%; max-height: 240px; overflow: auto; }
 
 /* Alt bar & toast */
-.statusbar { display: flex; gap: 12px; padding: 4px 14px; font-size: 12px; background: var(--bg-2); border-top: 1px solid var(--line); }
+.statusbar { height: 26px; line-height: 18px; align-items: center; flex: none; white-space: nowrap; overflow: hidden; display: flex; gap: 12px; padding: 4px 14px; font-size: 12px; background: var(--bg-2); border-top: 1px solid var(--line); }
 .toasts { position: fixed; right: 16px; bottom: 40px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
 .toast { background: var(--bg-3); border: 1px solid #3a3f55; border-radius: 10px; padding: 9px 14px; max-width: 420px; box-shadow: 0 8px 24px #0008; }
 .toast.error { border-color: #7a3040; background: #3a1f27; color: #f3b3be; }
@@ -421,3 +421,4 @@ mark.hl:hover { background: #f2b44d55; }
 .copy-btn .menu button { background: none; border: none; color: var(--text); font-weight: 400; font-size: inherit; flex-direction: column; align-items: flex-start; gap: 0; }
 .copy-btn .menu button:hover { background: #2f3446; }
 .orig-bar { margin-bottom: 8px; }
+.tnum { font-variant-numeric: tabular-nums; }
