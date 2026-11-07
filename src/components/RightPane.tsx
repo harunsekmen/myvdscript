@@ -12,6 +12,7 @@ import { buildTimed, collectTimedPaths } from "../lib/timed";
 import { checkWords } from "../lib/wordCheck";
 import type { ImageMeta, Project, Settings, TimedDoc } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
+import { MarkdownEnter } from "./mdShortcuts";
 import { ImageViewer } from "./ImageViewer";
 import { ConfirmDialog } from "./Dialogs";
 import { SpeakIcon } from "./SpeakIcon";
@@ -117,6 +118,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       Placeholder.configure({ placeholder: "Scriptini buraya yaz… (Ctrl+V ile resim yapıştırabilirsin)" }),
       ImageChip,
       Markdown,
+      MarkdownEnter,
     ],
     content: project.editorDoc ?? "",
     shouldRerenderOnTransaction: true,
@@ -125,7 +127,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       handlePaste: (_v, event) => {
         // Markdown yapısı taşıyan düz metin yapıştırılırsa biçimli olarak eklenir.
         const plain = event.clipboardData?.getData("text/plain") ?? "";
-        if (!event.clipboardData?.files.length && looksLikeMarkdown(plain)) {
+        if (!Array.from(event.clipboardData?.files ?? []).some((f) => f.type.startsWith("image/")) && looksLikeMarkdown(plain)) {
           editorRef.current?.chain().focus().insertContent(plain, { contentType: "markdown" }).run();
           return true;
         }
