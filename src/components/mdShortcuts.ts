@@ -13,6 +13,7 @@ const INLINE = /\*\*[^*\n]+\*\*|(^|\s)\*[^*\s][^*\n]*\*(\s|$)|`[^`\n]+`|~~[^~\n]
  * - Satırda düz metin olarak kalmış markdown (başlık, liste, alıntı, ```, ---, **kalın**, `kod`, bağlantı…)
  *   Enter'a basınca gerçek biçime çevrilir. Böylece hangi yolla girilmiş olursa olsun görünür hale gelir.
  */
+const TEXT_BLOCK = new Set(["paragraph", "heading"]);
 const PREFIX = /^(#{1,6}|[-*+]|\d+[.)]|>)[  ]/;
 
 /**
@@ -27,11 +28,15 @@ function convertPrefix(editor: Editor): boolean {
   if (editor.isDestroyed) return false;
   const { $from, empty } = editor.state.selection;
   const node = $from.parent;
-  if (!empty || node.type.name !== "paragraph") return false;
+  if (!empty || !TEXT_BLOCK.has(node.type.name)) return false;
   const m = PREFIX.exec(node.textContent);
   if (!m || $from.parentOffset !== m[0].length) return false;
   const start = $from.start();
-  const chain = () => editor.chain().deleteRange({ from: start, to: start + m[0].length });
+  // Silinince boş başlık olarak kalan blokta da çalışsın: önce paragrafa çevir.
+  const chain = () => {
+    const c = editor.chain().deleteRange({ from: start, to: start + m[0].length });
+    return node.type.name === "paragraph" ? c : c.setNode("paragraph");
+  };
   const mark = m[1];
   if (mark[0] === "#") return chain().setNode("heading", { level: mark.length }).run();
   if (mark === ">") return chain().toggleBlockquote().run();
@@ -77,10 +82,13 @@ export const MarkdownEnter = Extension.create({
       Space: ({ editor }) => {
         const { $from, empty } = editor.state.selection;
         const node = $from.parent;
-        if (!empty || node.type.name !== "paragraph" || $from.parentOffset !== node.content.size) return false;
+        if (!empty || !TEXT_BLOCK.has(node.type.name) || $from.parentOffset !== node.content.size) return false;
         const text = node.textContent;
         const start = $from.start();
-        const chain = () => editor.chain().deleteRange({ from: start, to: start + text.length });
+        const chain = () => {
+          const c = editor.chain().deleteRange({ from: start, to: start + text.length });
+          return node.type.name === "paragraph" ? c : c.setNode("paragraph");
+        };
         const h = /^(#{1,6})$/.exec(text);
         if (h) return chain().setNode("heading", { level: h[1].length }).run();
         if (/^[-*+]$/.test(text)) return chain().toggleBulletList().run();
