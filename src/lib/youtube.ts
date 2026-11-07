@@ -21,10 +21,11 @@ export interface VideoState {
   ready: boolean;
   playing: boolean;
   time: number;
+  duration: number;
   error: string | null;
 }
 
-const IDLE: VideoState = { videoId: null, ready: false, playing: false, time: 0, error: null };
+const IDLE: VideoState = { videoId: null, ready: false, playing: false, time: 0, duration: 0, error: null };
 
 let st: VideoState = IDLE;
 const listeners = new Set<() => void>();
@@ -77,6 +78,7 @@ function onMessage(e: MessageEvent) {
   } else if ((d.event === "infoDelivery" || d.event === "initialDelivery") && d.info) {
     const p: Partial<VideoState> = {};
     if (typeof d.info.currentTime === "number") p.time = d.info.currentTime;
+    if (typeof d.info.duration === "number" && d.info.duration > 0) p.duration = d.info.duration;
     if (typeof d.info.playerState === "number") p.playing = d.info.playerState === 1 || d.info.playerState === 3;
     if (Object.keys(p).length) set(p);
     if (stopAt != null && typeof p.time === "number" && p.time >= stopAt - 0.05 && p.time < stopAt + 5) {
@@ -123,4 +125,11 @@ export function pauseVideo() {
 
 export function setRate(rate: number) {
   command("setPlaybackRate", [rate]);
+}
+
+/** Videoda verilen saniyeye gider (oynatma durumunu değiştirmez). */
+export function seekTo(t: number) {
+  stopAt = null;
+  command("seekTo", [Math.max(0, t), true]);
+  set({ time: Math.max(0, t) });
 }

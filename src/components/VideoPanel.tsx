@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
-import { attachFrame, getVideoState, pauseVideo, playAt, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
+import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
 
 interface Meta {
   title: string;
@@ -12,6 +11,14 @@ interface Meta {
 
 // Açıklamalar yt-dlp ile bir kez alınır; oturum boyunca bellekte tutulur.
 const metaCache = new Map<string, Meta>();
+function Icon({ d, w = 2, fill = false }: { d: string; w?: number; fill?: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill={fill ? "currentColor" : "none"} stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
 const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 const clock = (s: number) => {
@@ -49,7 +56,6 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
   const [meta, setMeta] = useState<Meta | null>(id ? metaCache.get(id) ?? null : null);
   const [open, setOpen] = useState(false);
   const [rate, setRateState] = useState(1);
-  const [copied, setCopied] = useState(false);
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
   const cues = useMemo(() => parseCues(transcriptRaw), [transcriptRaw]);
 
@@ -105,19 +111,10 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
     setRateState(r);
     setRate(r);
   };
-  const copyLink = async () => {
-    try {
-      await writeText(`https://youtu.be/${id}?t=${Math.floor(time)}`);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      onToast(`Kopyalanamadı: ${e}`, "error");
-    }
-  };
 
   const cue = ready && vs.playing ? (cues.filter((c) => c.t <= time + 0.5).pop()?.text ?? "") : "";
   const origin = encodeURIComponent(window.location.origin);
-  const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&rel=0&playsinline=1&origin=${origin}`;
+  const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&playsinline=1&origin=${origin}`;
   const desc = meta?.description.trim() ?? "";
   const chapters = meta?.chapters ?? [];
   const curChapter = chapters.reduce((k, c, i) => (c.start <= time + 0.5 ? i : k), -1);
@@ -126,10 +123,6 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
     <div className="pane video-pane">
       <div className="pane-head">
         <span className="pane-title">Video</span>
-        <span className="spacer" />
-        <button className="btn small" onClick={copyLink} disabled={!ready} title="Videonun şu anki konumunun bağlantısını kopyala">
-          {copied ? "Kopyalandı ✓" : `🔗 ${clock(time)} bağlantısı`}
-        </button>
       </div>
       <div className="video-scroll">
         <div className="video-frame">
@@ -149,23 +142,56 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
           </div>
         )}
 
+        <div className="vp-seek">
+          <span className="vp-time">{clock(time)}</span>
+          <input
+            type="range"
+            aria-label="Video konumu"
+            min={0}
+            max={vs.duration || 1}
+            step={0.5}
+            value={Math.min(time, vs.duration || time)}
+            disabled={!ready || !vs.duration}
+            style={{ "--p": `${vs.duration ? Math.min(100, (time / vs.duration) * 100) : 0}%` } as React.CSSProperties}
+            onChange={(e) => seekTo(Number(e.target.value))}
+          />
+          <span className="vp-time">{clock(vs.duration)}</span>
+        </div>
         <div className="vp-controls">
-          <button className="vp-btn" onClick={() => playSentence(idx >= 0 && time - marks[idx] > 1.5 ? idx : idx - 1)} disabled={!ready || !marks.length} title="Önceki cümle">⏮</button>
-          <button className="vp-btn" onClick={() => playSentence(Math.max(idx, 0))} disabled={!ready || !marks.length} title="Bu cümleyi tekrar oynat">↻</button>
-          <button className="vp-btn main" onClick={toggle} disabled={!ready} title={vs.playing ? "Duraklat" : "Oynat"}>{vs.playing ? "❚❚" : "▶"}</button>
-          <button className="vp-btn" onClick={() => playSentence(idx + 1)} disabled={!ready || !marks.length} title="Sonraki cümle">⏭</button>
-          <span className="spacer" />
+          <div className="vp-group">
+            <button className="vp-btn" onClick={() => playSentence(idx >= 0 && time - marks[idx] > 1.5 ? idx : idx - 1)} disabled={!ready || !marks.length} title="Önceki cümle" aria-label="Önceki cümle">
+              <Icon d="M19 20 9 12l10-8v16ZM5 4v16" />
+            </button>
+            <button className="vp-btn" onClick={() => playSentence(Math.max(idx, 0))} disabled={!ready || !marks.length} title="Bu cümleyi tekrar oynat" aria-label="Bu cümleyi tekrar oynat">
+              <Icon d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
+            </button>
+            <button className="vp-btn main" onClick={toggle} disabled={!ready} title={vs.playing ? "Duraklat" : "Oynat"} aria-label={vs.playing ? "Duraklat" : "Oynat"}>
+              {vs.playing ? <Icon d="M7 4v16M17 4v16" w={3} /> : <Icon d="M7 4.5v15l13-7.5-13-7.5Z" fill />}
+            </button>
+            <button className="vp-btn" onClick={() => playSentence(idx + 1)} disabled={!ready || !marks.length} title="Sonraki cümle" aria-label="Sonraki cümle">
+              <Icon d="m5 4 10 8-10 8V4ZM19 4v16" />
+            </button>
+          </div>
           <div className="vp-rates" role="group" aria-label="Oynatma hızı">
             {RATES.map((r) => (
               <button key={r} className={r === rate ? "on" : ""} onClick={() => pickRate(r)} disabled={!ready}>{r}×</button>
             ))}
           </div>
         </div>
-        <div className="vp-cue">{cue || (ready ? "Çalarken orijinal altyazı burada görünür" : "Video yükleniyor…")}</div>
+        <div className={"vp-cue" + (cue ? " live" : "")}>
+          <span className="vp-cue-tag">EN</span>
+          <span className="vp-cue-text">{cue || (ready ? "Video çalarken orijinal altyazı burada görünür" : "Video yükleniyor…")}</span>
+        </div>
 
         <div className="video-info">
           <div className="video-head">
-            <img className="video-thumb" src={`https://i.ytimg.com/vi/${id}/mqdefault.jpg`} alt="" draggable={false} />
+            <button
+              className="video-thumb-btn"
+              onClick={() => api.openExternal(`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`)}
+              title="Kapak resmini HD olarak tarayıcıda aç"
+            >
+              <img className="video-thumb" src={`https://i.ytimg.com/vi/${id}/mqdefault.jpg`} alt="" draggable={false} />
+            </button>
             <div className="video-head-text">
               <div className="video-title">{meta?.title || title}</div>
               {meta?.channel && <div className="video-channel muted">{meta.channel}</div>}
@@ -198,7 +224,6 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
               <button className="video-desc-toggle" onClick={() => setOpen(!open)}>{open ? "Daralt" : "Devamını göster"}</button>
             </div>
           )}
-          <button className="btn small video-ext" onClick={() => api.openExternal(url)}>YouTube'da aç ↗</button>
         </div>
       </div>
     </div>
