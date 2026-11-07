@@ -21,7 +21,10 @@ const PREFIX = /^(#{1,6}|[-*+]|\d+[.)]|>)[  ]/;
  * bağımsız, doğrudan belgenin durumuna bakar.
  */
 function convertPrefix(editor: Editor): boolean {
-  if (editor.isDestroyed || (editor.view as any).composing) return false;
+  // Kasıtlı olarak `view.composing` kontrol edilmez: WebView2'de (Türkçe klavye / TSF) kompozisyon durumu takılı
+  // kalabiliyor ve tiptap'in kendi input kuralları ile Space kısayolu hiç çalışmıyor. Koşul zaten çok dar:
+  // imleç satır başındaki "# " işaretinin hemen ardında olmalı.
+  if (editor.isDestroyed) return false;
   const { $from, empty } = editor.state.selection;
   const node = $from.parent;
   if (!empty || node.type.name !== "paragraph") return false;
@@ -47,7 +50,9 @@ export const MarkdownEnter = Extension.create({
   onCreate() {
     // Kompozisyon (IME) bitince de kontrol et.
     const editor = this.editor;
-    editor.view.dom.addEventListener("compositionend", () => setTimeout(() => convertPrefix(editor), 0));
+    const run = () => setTimeout(() => convertPrefix(editor), 0);
+    editor.view.dom.addEventListener("compositionend", run);
+    editor.view.dom.addEventListener("input", run);
   },
 
   addInputRules() {
