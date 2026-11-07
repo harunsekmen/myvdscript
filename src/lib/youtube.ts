@@ -111,3 +111,7 @@ export function playAt(from: number, to?: number | null) {
 export function pauseVideo() {
   command("pauseVideo");
 }
+
+export function setRate(rate: number) {
+  command("setPlaybackRate", [rate]);
+}

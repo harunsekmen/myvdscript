@@ -363,10 +363,17 @@ async fn fetch_default_inner(url: &str, dir: &std::path::Path) -> Result<Transcr
 }
 
 #[derive(Serialize)]
+pub struct Chapter {
+    pub title: String,
+    pub start: f64,
+}
+
+#[derive(Serialize)]
 pub struct VideoMeta {
     pub title: String,
     pub description: String,
     pub channel: String,
+    pub chapters: Vec<Chapter>,
 }
 
 /// Video paneli için başlık, kanal ve açıklama (yt-dlp).
@@ -376,7 +383,15 @@ pub async fn video_meta(url: String) -> Result<VideoMeta, String> {
     let v = video_info(&url).await?;
     let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
     let channel = if v["channel"].is_string() { s("channel") } else { s("uploader") };
-    Ok(VideoMeta { title: s("title"), description: s("description"), channel })
+    let chapters = v["chapters"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| Some(Chapter { title: c["title"].as_str()?.to_string(), start: c["start_time"].as_f64()? }))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(VideoMeta { title: s("title"), description: s("description"), channel, chapters })
 }
 
 /// Varsayılan altyazıyı alır: önce İngilizce, yoksa Türkçe, yoksa videodaki ilk altyazı.

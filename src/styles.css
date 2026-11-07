@@ -422,3 +422,21 @@ mark.hl:hover { background: #f2b44d55; }
 .video-desc-toggle { background: none; border: none; color: var(--accent); padding: 4px 0 0; font-size: 12.5px; cursor: pointer; }
 .video-ext { align-self: flex-start; margin-top: 4px; }
 .proc-menu button { flex-direction: column; align-items: flex-start; gap: 0; }
+.vp-controls { display: flex; align-items: center; gap: 6px; padding: 10px 14px 4px; }
+.vp-btn { min-width: 34px; height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-3); color: var(--text); cursor: pointer; font-size: 13px; }
+.vp-btn:hover:not(:disabled) { background: #2b2f3e; border-color: #3a3f55; }
+.vp-btn.main { background: var(--accent-2); border-color: var(--accent-2); color: #fff; min-width: 42px; }
+.vp-btn:disabled { opacity: .4; cursor: default; }
+.vp-rates { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.vp-rates button { background: none; border: none; border-right: 1px solid var(--line); color: var(--muted); padding: 0 7px; height: 30px; font-size: 11.5px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.vp-rates button:last-child { border-right: none; }
+.vp-rates button.on { background: var(--bg-3); color: var(--accent); font-weight: 600; }
+.vp-rates button:disabled { opacity: .4; cursor: default; }
+.vp-cue { margin: 4px 14px 0; padding: 8px 10px; min-height: 40px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); font-style: italic; font-size: 12.5px; line-height: 1.45; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vp-sub { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.vp-chapters { display: flex; flex-direction: column; }
+.vp-chapters button { display: flex; gap: 10px; text-align: left; background: none; border: none; border-radius: 6px; padding: 5px 6px; color: var(--text); font-size: 12.5px; cursor: pointer; }
+.vp-chapters button:hover { background: var(--bg-3); }
+.vp-chapters button.on { color: var(--accent); background: var(--bg-3); }
+.vp-ch-t { flex: none; width: 44px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vp-ch-n { min-width: 0; overflow-wrap: anywhere; }

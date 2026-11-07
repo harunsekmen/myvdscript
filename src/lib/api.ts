@@ -58,7 +58,7 @@ export const api = {
   fetchTranscript: (url: string, lang: string, auto: boolean) =>
     invoke<Transcript>("fetch_transcript", { url, lang, auto }),
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
-  videoMeta: (url: string) => invoke<{ title: string; description: string; channel: string }>("video_meta", { url }),
+  videoMeta: (url: string) => invoke<{ title: string; description: string; channel: string; chapters: { title: string; start: number }[] }>("video_meta", { url }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };

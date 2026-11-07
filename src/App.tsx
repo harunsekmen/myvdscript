@@ -404,6 +404,10 @@ export default function App() {
 
   // ---- Bölme çubuğu ----
   const splitRef = useRef<HTMLDivElement>(null);
+  const videoMarks = useMemo(
+    () => [...new Set((project?.segments ?? []).flatMap((s) => (s.marks ?? []).map((m) => m.t)))].sort((a, b) => a - b),
+    [project?.segments],
+  );
   const hasVideoPane = !!project && !!videoIdOf(project.url);
   const L = Math.min(0.6, Math.max(0.2, settings.splitLeft ?? 0.36));
   const M = Math.min(0.45, Math.max(0.18, settings.splitMid ?? 0.26));
@@ -502,7 +506,13 @@ export default function App() {
           {hasVideoPane && (
             <>
               <div className="split-mid" style={{ width: `${M * 100}%` }}>
-                <VideoPanel url={project.url} title={project.title} />
+                <VideoPanel
+                  url={project.url}
+                  title={project.title}
+                  marks={videoMarks}
+                  transcriptRaw={project.transcriptRaw}
+                  onToast={toast}
+                />
               </div>
               <div className="divider" onPointerDown={startDrag("right")} />
             </>
