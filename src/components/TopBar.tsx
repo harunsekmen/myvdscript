@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CopyMode } from "../lib/copyExport";
 import type { ProjectMeta } from "../lib/types";
-import { CopySplitButton } from "./CopySplitButton";
 import { WindowControls } from "./WindowControls";
 
 interface Props {
@@ -14,8 +12,6 @@ interface Props {
   onRename: () => void;
   onDelete: () => void;
   onClearAll: () => void;
-  onCopy: (mode: CopyMode) => Promise<void> | void;
-  copyTimed?: boolean;
   onSettings: () => void;
 }
 
@@ -75,8 +71,12 @@ export function TopBar(p: Props) {
       </div>
       <button className="btn" onClick={p.onNewFromLink}>＋ Linkten başlat</button>
       <div className="spacer" data-tauri-drag-region />
-      <CopySplitButton onCopy={p.onCopy} timed={p.copyTimed} />
-      <button className="btn" onClick={p.onSettings} title="Ayarlar (Ctrl+,)">⚙ Ayarlar</button>
+      <button className="icon-btn settings-btn" onClick={p.onSettings} title="Ayarlar (Ctrl+,)" aria-label="Ayarlar">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
       <WindowControls />
     </header>
   );

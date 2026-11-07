@@ -75,6 +75,7 @@ export default function App() {
   const [openSignal, setOpenSignal] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [ready, setReady] = useState(false);
+  const [wordCount, setWordCount] = useState("");
 
   const saver = useMemo(
     () => createAutosaver<Project>((p) => api.saveProject(p), (s, err) => setStatus({ s, err })),
@@ -455,8 +456,6 @@ export default function App() {
         onRename={() => setDialog({ kind: "rename" })}
         onDelete={() => setDialog({ kind: "delete" })}
         onClearAll={() => setDialog({ kind: "clear" })}
-        onCopy={copy}
-        copyTimed={tab === "timed"}
         onSettings={() => setShowSettings(true)}
       />
 
@@ -492,6 +491,8 @@ export default function App() {
               onMeta={onMeta}
               onToast={toast}
               registerGetDoc={registerGetDoc}
+              onCopy={copy}
+              onCount={setWordCount}
             />
           </div>
         </main>
@@ -508,6 +509,7 @@ export default function App() {
 
       <footer className="statusbar">
         <span className={status.s === "error" ? "err" : "muted"}>{statusText}</span>
+        {project && wordCount && <span className="muted">· {wordCount}</span>}
         <span className="spacer" />
         <span className="muted">
           {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+Shift+C kopyala

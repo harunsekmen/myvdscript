@@ -4,7 +4,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
-import { collectImagePaths } from "../lib/copyExport";
+import { collectImagePaths, type CopyMode } from "../lib/copyExport";
+import { CopyButton } from "./CopyButton";
 import { speak } from "../lib/speech";
 import { buildTimed, collectTimedPaths } from "../lib/timed";
 import { checkWords } from "../lib/wordCheck";
@@ -30,12 +31,14 @@ interface Props {
   onMeta: (path: string, meta: ImageMeta | null) => void;
   onToast: (msg: string, kind?: "error" | "info") => void;
   registerGetDoc: (fn: () => any) => void;
+  onCopy: (mode: CopyMode) => Promise<void> | void;
+  onCount: (label: string) => void;
 }
 
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "webm", "ogg", "flac", "mpeg", "mpga"];
 
-export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc }: Props) {
+export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [pick, setPick] = useState<{ text: string; x: number; y: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -181,6 +184,16 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
 
   useEffect(() => setPick(null), [tab]);
 
+  // Kelime sayısı durum çubuğunda gösterilir.
+  const editorText = editor?.getText() ?? "";
+  const timedWords = project.timed?.items.filter((i) => i.k === "w").length ?? 0;
+  const timedActive = tab === "timed" && !!project.timed;
+  useEffect(() => {
+    const words = editorText.trim().split(/\s+/).filter(Boolean).length;
+    onCount(timedActive ? `${timedWords} kelime · zamanlı` : `${words} kelime`);
+  }, [editorText, timedWords, timedActive, onCount]);
+  useEffect(() => () => onCount(""), [onCount]);
+
   // Proje değişince (bileşen sökülürken) bekleyen resim silmelerini uygula
   useEffect(
     () => () => {
@@ -257,14 +270,6 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   };
 
   if (!editor) return null;
-  const btn = (label: string, active: boolean, run: () => void, title?: string) => (
-    <button className={"tb" + (active ? " on" : "")} title={title} onMouseDown={(e) => e.preventDefault()} onClick={run}>
-      {label}
-    </button>
-  );
-  const chain = () => editor.chain().focus();
-  const words = editor.getText().trim().split(/\s+/).filter(Boolean).length;
-  const timedWords = project.timed?.items.filter((i) => i.k === "w").length ?? 0;
   const timedTab = tab === "timed" && !!project.timed;
   const clampX = (x: number) => Math.min(Math.max(x, 24), window.innerWidth - 24);
 
@@ -283,17 +288,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
         ) : (
           <span className="pane-title">Senaryo</span>
         )}
-        {!timedTab && (
-          <div className="toolbar">
-            {btn("H1", editor.isActive("heading", { level: 1 }), () => chain().toggleHeading({ level: 1 }).run(), "Başlık 1")}
-            {btn("H2", editor.isActive("heading", { level: 2 }), () => chain().toggleHeading({ level: 2 }).run(), "Başlık 2")}
-            {btn("B", editor.isActive("bold"), () => chain().toggleBold().run(), "Kalın (Ctrl+B)")}
-            {btn("I", editor.isActive("italic"), () => chain().toggleItalic().run(), "İtalik (Ctrl+I)")}
-            {btn("•", editor.isActive("bulletList"), () => chain().toggleBulletList().run(), "Madde işaretli liste")}
-            {btn("1.", editor.isActive("orderedList"), () => chain().toggleOrderedList().run(), "Numaralı liste")}
-          </div>
-        )}
-        <span className="muted pane-count">{timedTab ? `${timedWords} kelime · zamanlı` : `${words} kelime`}</span>
+        <span className="spacer" />
         {timedTab && (
           <button
             className="btn small"
@@ -312,6 +307,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
         >
           ＋ Ses / video
         </button>
+        <CopyButton onCopy={onCopy} timed={timedTab} />
       </div>
       {busy && (
         <div className="banner busy">
