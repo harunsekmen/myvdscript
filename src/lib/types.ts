@@ -85,6 +85,9 @@ export interface Settings {
   lineHeight: number;
   textWidth: number;
   splitRatio: number;
+  /** Video açıkken üç bölmeli düzen: sol ve orta panelin genişlik oranları (kalan sağ panel). */
+  splitLeft: number;
+  splitMid: number;
   segmentTint: number;
   chunkChars: number;
   lastProjectId: string;

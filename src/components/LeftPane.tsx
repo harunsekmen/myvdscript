@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { api, onYtdlpStatus, streamChat } from "../lib/api";
+import { onYtdlpStatus, streamChat } from "../lib/api";
 import { segStyle } from "../lib/colors";
 import { buildInsightMessage } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
 import { speak } from "../lib/speech";
-import { getAudioState, pauseOriginal, playAt, prefetchAudio, seekTo, stopOriginal, subscribeAudio } from "../lib/originalAudio";
+import { getVideoState, playAt, subscribeVideo, videoIdOf } from "../lib/youtube";
 import type { Insight, Project, Segment, SentenceMark, Settings } from "../lib/types";
 import type { Progress } from "../lib/pipeline";
 import { InsightCard } from "./InsightCard";
@@ -100,28 +100,6 @@ function renderPara(text: string, insights: Insight[], onOpen: (id: string) => v
   return out;
 }
 
-const fmtClock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-
-/** `[dk:sn] metin` satırlarını (altyazı kaynağı, İngilizce) zamanlı listeye çevirir. */
-function parseCues(raw: string | undefined): { t: number; text: string }[] {
-  const out: { t: number; text: string }[] = [];
-  for (const line of (raw ?? "").split("\n")) {
-    const m = /^\[(\d{1,4}):(\d{2})\]\s*(.*)$/.exec(line.trim());
-    if (m && m[3]) out.push({ t: Number(m[1]) * 60 + Number(m[2]), text: m[3] });
-  }
-  return out;
-}
-
-/** Verilen zamanda çalan satırın metni (son başlangıcı geçmiş satır). */
-function cueAt(cues: { t: number; text: string }[], time: number): string {
-  let text = "";
-  for (const c of cues) {
-    if (c.t > time + 0.5) break;
-    text = c.text;
-  }
-  return text;
-}
-
 export function LeftPane({ project, settings, models, proc, onInsights, onReprocess, onCustomRun, onCancel, onFetchUrl, onToast }: Props) {
   const segments = proc.live ?? project.segments;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -130,7 +108,8 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   const [activeId, setActiveId] = useState<string | null>(null);
   const [live, setLive] = useState<{ id: string; text: string; error?: string } | null>(null);
   const [tick, setTick] = useState(0);
-  const [videoFrom, setVideoFrom] = useState<number | null>(null);
+  const [procMenu, setProcMenu] = useState(false);
+  const procRef = useRef<HTMLDivElement>(null);
   const [activeSeg, setActiveSeg] = useState(0);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -143,11 +122,9 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   // Proje değişince açık kart/seçim kapanır.
   useEffect(() => {
     runRef.current?.cancel();
-    stopOriginal();
     setActiveId(null);
     setSel(null);
     setLive(null);
-    setVideoFrom(null);
   }, [project.id]);
 
   const readSelection = useCallback(() => {
@@ -244,87 +221,61 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   const speakSel = () => {
     if (!sel) return;
     const range = audioRange(segments.find((s) => s.id === sel.segmentId)?.marks, sel);
-    if (range && /^https?:\/\//.test(project.url)) {
-      void playAt(project.id, project.url, range.from, range.to ?? range.from + 60).catch((e) =>
-        onToast(`Orijinal ses çalınamadı: ${e?.message ?? e}`, "error"),
-      );
+    if (range && hasVideo) {
+      try {
+        playAt(range.from, range.to ?? range.from + 60);
+      } catch (e: any) {
+        onToast(`Video oynatılamadı: ${e?.message ?? e}`, "error");
+      }
       return;
     }
     void speak(sel.quote).then((ok) => ok || onToast("Ses çalınamadı (internet bağlantısını kontrol et)", "error"));
   };
 
-  // Oynatıcı: sol paneldeki küçük çubuk ve çalan cümlenin vurgusu.
-  const audio = useSyncExternalStore(subscribeAudio, getAudioState);
-  const audioHere = audio.projectId === project.id && audio.status !== "idle";
-  const hasTimes = segments.some((s) => s.marks?.length);
-  const hasAudio = hasTimes && /^https?:\/\//.test(project.url);
-  // Vurgu yalnızca ses çalarken: duraklayınca ya da cümle bitince seçili kalmaz.
+  // Orta paneldeki gömülü video: çalan cümlenin vurgusu.
+  const vs = useSyncExternalStore(subscribeVideo, getVideoState);
+  const videoId = videoIdOf(project.url);
+  const hasVideo = !!videoId && segments.some((s) => s.marks?.length);
+  // Vurgu yalnızca video çalarken: duraklayınca ya da cümle bitince seçili kalmaz.
   const activeSent = useMemo(() => {
-    if (!audioHere || audio.status !== "ready" || !audio.playing) return null;
+    if (!hasVideo || vs.videoId !== videoId || !vs.ready || !vs.playing) return null;
     let best: { segId: string; para: number; start: number; end: number; t: number } | null = null;
     for (const s of segments) {
       const lens = (paras.get(s.id) ?? []).map((p) => p.length);
-      const r = sentenceAtTime(s.marks, lens, audio.time);
+      const r = sentenceAtTime(s.marks, lens, vs.time);
       if (!r) continue;
       const t = markTimeAt(s.marks, r.para, r.start) ?? 0;
       if (!best || t > best.t) best = { segId: s.id, ...r, t };
     }
     return best;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audio.time, audio.status, audio.playing, audioHere, segments, paras]);
+  }, [vs.time, vs.ready, vs.playing, vs.videoId, hasVideo, segments, paras]);
 
-  // Oynat: duraklatılmış/durmuş konumdan devam eder (cümle sonunda durduysa sonraki cümleden).
-  const playerPlay = () => {
-    if (audioHere && audio.playing) return pauseOriginal();
-    const atEnd = audio.duration > 0 && audio.time >= audio.duration - 0.5;
-    const from = audioHere && audio.status === "ready" && !atEnd ? audio.time : 0;
-    playAt(project.id, project.url, from, null).catch((e) =>
-      onToast(`Orijinal ses çalınamadı: ${e?.message ?? e}`, "error"),
-    );
-  };
-
-  // Zaman işaretleri hazır olunca ses arka planda inmeye başlar.
   useEffect(() => {
-    if (hasAudio && !proc.running) prefetchAudio(project.id, project.url);
-  }, [hasAudio, proc.running, project.id, project.url]);
-
-  // Altyazı (İngilizce) satırları: oynatıcıda çalan cümlenin kaynağını yumuşakça göstermek için.
-  const cues = useMemo(() => parseCues(project.transcriptRaw), [project.transcriptRaw]);
-  const enLine = audioHere && audio.status === "ready" ? cueAt(cues, audio.time) : "";
+    const close = (e: MouseEvent) => !procRef.current?.contains(e.target as Node) && setProcMenu(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   // Metni çift tıklayınca o cümle çalar ve cümle bitince durur. Tek tık normal metin seçimi içindir.
   const onParaDoubleClick = (e: React.MouseEvent<HTMLParagraphElement>) => {
     const el = e.target as HTMLElement;
     if (el.closest("mark.hl")) return;
     const tAttr = el.closest<HTMLElement>("[data-t]")?.dataset.t;
-    if (tAttr == null || !hasAudio) return;
+    if (tAttr == null || !hasVideo) return;
     // Çift tık tarayıcıda kelime seçimi de başlatır; oynatma için bu seçimi ve balonu temizle.
     window.getSelection()?.removeAllRanges();
     setSel(null);
     const t = Number(tAttr);
-    setVideoFrom(t);
     const segId = el.closest<HTMLElement>("p[data-seg]")?.dataset.seg;
     const marks = segments.find((s) => s.id === segId)?.marks;
     const end = marks?.find((m) => m.t > t)?.t ?? t + 25; // sonraki cümlenin başı; yoksa kısa bir pencere
-    playAt(project.id, project.url, t, end).catch((err) =>
-      onToast(`Orijinal ses çalınamadı: ${err?.message ?? err}`, "error"),
-    );
-  };
-
-  const openVideo = () => {
-    let target = project.url;
-    if (videoFrom != null) {
-      try {
-        const u = new URL(project.url);
-        u.searchParams.set("t", `${Math.floor(videoFrom)}s`);
-        target = u.toString();
-      } catch {
-        /* geçersiz URL: olduğu gibi aç */
-      }
+    try {
+      playAt(t, end);
+    } catch (err: any) {
+      onToast(`Video oynatılamadı: ${err?.message ?? err}`, "error");
     }
-    api.openExternal(target).catch((e) => onToast(`Video açılamadı: ${e}`, "error"));
   };
-  const hasVideo = /^https?:\/\//.test(project.url);
 
   // Seçim balonu ekranın dışına taşmasın diye yatay konumu sınırlanır (iki düğme ~170px).
   const selLeft = sel ? Math.min(Math.max(sel.rect.left + sel.rect.width / 2, 96), window.innerWidth - 96) : 0;
@@ -400,11 +351,6 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     <div className="pane left-pane">
       <div className="pane-head">
         <span className="pane-title">Kaynak metin</span>
-        {hasVideo && (
-          <button className="btn small video-link" onClick={openVideo} title={project.url}>
-            {videoFrom != null ? `▶ ${fmtClock(videoFrom)}'den aç` : "▶ Videoyu aç"}
-          </button>
-        )}
         {proc.running ? (
           <>
             <span className="muted">
@@ -415,22 +361,37 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
             <button className="btn small" onClick={onCancel}>İptal</button>
           </>
         ) : (
-          <>
-            {project.transcriptRaw && (
-              <button className="btn small" onClick={onReprocess} title="Altyazıyı yeniden AI ile işle">
-                Yeniden işle
+          (project.transcriptRaw || segments.length > 0) && (
+            <div className="dropdown" ref={procRef}>
+              <button className="btn small" onClick={() => setProcMenu(!procMenu)} title="Altyazıyı AI ile yeniden işle">
+                Yeniden işle ▾
               </button>
-            )}
-            {segments.length > 0 && (
-              <button
-                className="btn small"
-                onClick={() => setCustomOpen(true)}
-                title="Altyazıyı varsayılan istemle birlikte, kendi isteminizin ek olarak uygulandığı şekilde yeniden işleyin"
-              >
-                Özel istemle işle
-              </button>
-            )}
-          </>
+              {procMenu && (
+                <div className="menu right proc-menu">
+                  {project.transcriptRaw && (
+                    <button
+                      onClick={() => {
+                        setProcMenu(false);
+                        onReprocess();
+                      }}
+                    >
+                      Yeniden işle <span className="muted">Varsayılan istemle</span>
+                    </button>
+                  )}
+                  {segments.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setProcMenu(false);
+                        setCustomOpen(true);
+                      }}
+                    >
+                      Özel istemle işle… <span className="muted">Varsayılan istemin üstüne kendi talimatın</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
       {proc.running && proc.phase === "transcript" && (
@@ -445,44 +406,6 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
           {project.transcriptRaw ? (
             <button className="btn small" onClick={onReprocess}>Yeniden dene</button>
           ) : null}
-        </div>
-      )}
-
-      {hasAudio && (
-        <div className="orig-bar">
-          <button
-            className={"orig-play" + (audioHere && audio.playing ? " on" : "")}
-            onClick={playerPlay}
-            disabled={audio.status === "loading"}
-            title={audioHere && audio.playing ? "Duraklat" : "Oynat (kaldığı yerden)"}
-            aria-label={audioHere && audio.playing ? "Duraklat" : "Oynat"}
-          >
-            {audio.status === "loading" ? "…" : audioHere && audio.playing ? "❚❚" : "▶"}
-          </button>
-          <div className="orig-main">
-            <div className="orig-en" title={enLine}>
-              {enLine || (audio.status === "loading" ? "Ses indiriliyor…" : "Orijinal ses")}
-            </div>
-            <input
-              type="range"
-              className="orig-seek"
-              aria-label="Oynatma konumu"
-              min={0}
-              max={audioHere && audio.duration ? audio.duration : 1}
-              step={0.1}
-              value={audioHere ? Math.min(audio.time, audio.duration || audio.time) : 0}
-              style={{ "--p": `${audioHere && audio.duration ? Math.min(100, (audio.time / audio.duration) * 100) : 0}%` } as React.CSSProperties}
-              disabled={!audioHere || audio.status !== "ready"}
-              onChange={(e) => seekTo(Number(e.target.value))}
-            />
-          </div>
-          <span className="orig-time">
-            {fmtClock(audioHere ? audio.time : 0)} / {fmtClock(audioHere ? audio.duration : 0)}
-          </span>
-          {audioHere && audio.error && <span className="orig-err">{audio.error}</span>}
-          {audioHere && (
-            <button className="orig-close" onClick={stopOriginal} title="Oynatıcıyı kapat" aria-label="Oynatıcıyı kapat">✕</button>
-          )}
         </div>
       )}
 

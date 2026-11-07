@@ -362,6 +362,23 @@ async fn fetch_default_inner(url: &str, dir: &std::path::Path) -> Result<Transcr
     Ok(Transcript { lang, auto: false, text, title })
 }
 
+#[derive(Serialize)]
+pub struct VideoMeta {
+    pub title: String,
+    pub description: String,
+    pub channel: String,
+}
+
+/// Video paneli için başlık, kanal ve açıklama (yt-dlp).
+#[tauri::command]
+pub async fn video_meta(url: String) -> Result<VideoMeta, String> {
+    check_url(&url)?;
+    let v = video_info(&url).await?;
+    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    let channel = if v["channel"].is_string() { s("channel") } else { s("uploader") };
+    Ok(VideoMeta { title: s("title"), description: s("description"), channel })
+}
+
 /// Varsayılan altyazıyı alır: önce İngilizce, yoksa Türkçe, yoksa videodaki ilk altyazı.
 #[tauri::command]
 pub async fn fetch_default_transcript(url: String) -> Result<Transcript, String> {

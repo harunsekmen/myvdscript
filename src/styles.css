@@ -78,6 +78,9 @@ textarea.input { resize: vertical; }
 /* Bölünmüş düzen */
 .split { flex: 1; display: flex; min-height: 0; }
 .split-left { min-width: 0; display: flex; }
+.split-mid { min-width: 0; display: flex; flex: none; }
+.split.dragging iframe { pointer-events: none; }
+.split.dragging { user-select: none; }
 .split-right { flex: 1; min-width: 0; display: flex; }
 .divider { width: 7px; margin: 0 -3px; z-index: 5; cursor: col-resize; background: transparent; position: relative; }
 .divider::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--line); transition: background .12s, width .12s, left .12s; }
@@ -109,7 +112,6 @@ mark.hl:hover { background: #f2b44d55; }
 .sel-pop button:hover { background: var(--accent); }
 .sel-pop button.speak { background: #262c47; color: #c9d3ff; border: 1px solid #3b4678; }
 .sel-pop button.speak:hover { background: var(--accent-2); color: #fff; border-color: var(--accent); }
-.video-link { color: #b9c6ff; white-space: nowrap; }
 .start-empty { width: min(560px, 100%); margin: 0 auto; padding: 56px 24px; gap: 12px; align-items: stretch; }
 .start-title { font-size: 16px; font-weight: 600; }
 .link-start { display: flex; gap: 8px; align-items: center; text-align: left; }
@@ -386,26 +388,6 @@ mark.hl:hover { background: #f2b44d55; }
 .sub-code { color: var(--muted); font-size: 12px; }
 .sub-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--accent-2); color: #fff; }
 
-/* Orijinal ses oynatıcısı (sol panel) */
-/* Orijinal ses oynatıcısı: panel başlığıyla aynı düz dil (--line, --bg-3, --accent) */
-.orig-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--bg-2); font-size: 12.5px; min-height: 44px; }
-.orig-play { flex: none; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-3); color: var(--text); font-size: 11px; display: grid; place-items: center; cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
-.orig-play:hover:not(:disabled) { background: #2b2f3e; border-color: #3a3f55; }
-.orig-play.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
-.orig-play:disabled { opacity: .45; cursor: default; }
-.orig-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.orig-en { font-style: italic; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
-.orig-seek { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--accent) var(--p, 0%), var(--bg-3) var(--p, 0%)); }
-.orig-seek:disabled { cursor: default; opacity: .45; }
-.orig-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--text); border: none; }
-.orig-seek::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: transparent; }
-.orig-seek::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--text); }
-.orig-seek::-moz-range-track { height: 4px; border-radius: 999px; background: transparent; }
-.orig-seek::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
-.orig-time { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; font-size: 12px; }
-.orig-close { flex: none; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 4px 6px; border-radius: 6px; }
-.orig-close:hover { color: var(--text); background: var(--bg-3); }
-.orig-err { color: #ff8a8a; white-space: nowrap; }
 /* Çalan cümlenin vurgusu (yalnızca ses çalarken); tek tık metin seçimi içindir, çift tık oynatır */
 .reader-scroll span[data-t] { border-radius: 6px; transition: background .18s; }
 .reader-scroll span.cur { background: #6c8cff40; color: #fff; }
@@ -420,7 +402,23 @@ mark.hl:hover { background: #f2b44d55; }
 .copy-btn.done button { background: #2f9e6f; border-color: #3fb985; }
 .copy-btn .menu button { background: none; border: none; color: var(--text); font-weight: 400; font-size: inherit; flex-direction: column; align-items: flex-start; gap: 0; }
 .copy-btn .menu button:hover { background: #2f3446; }
-.orig-bar { margin-bottom: 8px; }
 .tnum { font-variant-numeric: tabular-nums; }
 .status-save.ok { color: #5fb894; }
 .status-count { padding-left: 12px; border-left: 1px solid var(--line); }
+
+/* Orta panel: gömülü video */
+.video-pane { width: 100%; }
+.video-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.video-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.video-info { padding: 14px 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.video-head { display: flex; gap: 12px; align-items: flex-start; }
+.video-head-text { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.video-thumb { flex: none; width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.video-title { font-weight: 600; font-size: 15px; line-height: 1.4; }
+.video-channel { font-size: 12.5px; }
+.video-desc-text { font-size: 13px; line-height: 1.55; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.video-desc-text.open { display: block; -webkit-line-clamp: unset; }
+.video-desc-toggle { background: none; border: none; color: var(--accent); padding: 4px 0 0; font-size: 12.5px; cursor: pointer; }
+.video-ext { align-self: flex-start; margin-top: 4px; }
+.proc-menu button { flex-direction: column; align-items: flex-start; gap: 0; }

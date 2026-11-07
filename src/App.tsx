@@ -18,6 +18,8 @@ import { LeftPane, type ProcState } from "./components/LeftPane";
 import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TopBar } from "./components/TopBar";
+import { VideoPanel } from "./components/VideoPanel";
+import { videoIdOf } from "./lib/youtube";
 import { SubtitlePicker } from "./components/SubtitlePicker";
 import type { SubOption, SubtitleList } from "./lib/api";
 
@@ -35,6 +37,8 @@ const DEFAULTS: Settings = {
   lineHeight: 1.75,
   textWidth: 720,
   splitRatio: 0.5,
+  splitLeft: 0.36,
+  splitMid: 0.26,
   segmentTint: 0.12,
   chunkChars: 6000,
   lastProjectId: "",
@@ -400,11 +404,30 @@ export default function App() {
 
   // ---- Bölme çubuğu ----
   const splitRef = useRef<HTMLDivElement>(null);
-  const startDrag = (e: React.PointerEvent) => {
+  const hasVideoPane = !!project && !!videoIdOf(project.url);
+  const L = Math.min(0.6, Math.max(0.2, settings.splitLeft ?? 0.36));
+  const M = Math.min(0.45, Math.max(0.18, settings.splitMid ?? 0.26));
+  // which: sol bölme çubuğu ("left") ya da sağ bölme çubuğu ("right"); video yoksa tek çubuk vardır.
+  const startDrag = (which: "left" | "right") => (e: React.PointerEvent) => {
     e.preventDefault();
     const box = splitRef.current!.getBoundingClientRect();
-    const move = (ev: PointerEvent) => patchSettings({ splitRatio: Math.min(0.75, Math.max(0.25, (ev.clientX - box.left) / box.width)) });
+    splitRef.current!.classList.add("dragging");
+    const move = (ev: PointerEvent) => {
+      const x = (ev.clientX - box.left) / box.width;
+      if (!hasVideoPane) return patchSettings({ splitRatio: Math.min(0.75, Math.max(0.25, x)) });
+      const MIN_L = 0.2, MIN_M = 0.18, MIN_R = 0.22;
+      if (which === "left") {
+        // sol/orta sınırı: sağ panelin genişliği sabit kalır
+        const edge = L + M;
+        const left = Math.min(Math.max(x, MIN_L), edge - MIN_M);
+        patchSettings({ splitLeft: left, splitMid: edge - left });
+      } else {
+        const mid = Math.min(Math.max(x - L, MIN_M), 1 - L - MIN_R);
+        patchSettings({ splitMid: mid });
+      }
+    };
     const up = () => {
+      splitRef.current?.classList.remove("dragging");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -461,7 +484,7 @@ export default function App() {
 
       {project ? (
         <main className="split" ref={splitRef}>
-          <div className="split-left" style={{ width: `${settings.splitRatio * 100}%` }}>
+          <div className="split-left" style={{ width: `${(hasVideoPane ? L : settings.splitRatio) * 100}%` }}>
             <LeftPane
               project={project}
               settings={settings}
@@ -475,7 +498,15 @@ export default function App() {
               onToast={toast}
             />
           </div>
-          <div className="divider" onPointerDown={startDrag} />
+          <div className="divider" onPointerDown={startDrag("left")} />
+          {hasVideoPane && (
+            <>
+              <div className="split-mid" style={{ width: `${M * 100}%` }}>
+                <VideoPanel url={project.url} title={project.title} />
+              </div>
+              <div className="divider" onPointerDown={startDrag("right")} />
+            </>
+          )}
           <div className="split-right">
             <RightPane
               key={project.id}
