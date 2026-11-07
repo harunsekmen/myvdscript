@@ -508,12 +508,12 @@ export default function App() {
       )}
 
       <footer className="statusbar">
-        <span className={status.s === "error" ? "err" : "muted"}>{statusText}</span>
-        <span className="spacer" />
-        {project && wordCount && <span className="muted tnum">{wordCount} ·</span>}
         <span className="muted">
           {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+Shift+C kopyala
         </span>
+        <span className="spacer" />
+        {project && wordCount && <span className="muted tnum">{wordCount} ·</span>}
+        <span className={"status-save " + (status.s === "error" ? "err" : "muted")}>{statusText}</span>
       </footer>
 
       {showSettings && (

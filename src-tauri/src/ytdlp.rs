@@ -43,6 +43,8 @@ fn cookie_args() -> Vec<String> {
 pub async fn run(args: Vec<String>) -> Result<Output, String> {
     let path = ensure()?;
     let mut cmd = tokio::process::Command::new(path);
+    cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    cmd.args(["--encoding", "utf-8"]);
     cmd.args(cookie_args());
     cmd.args(args);
     #[cfg(windows)]

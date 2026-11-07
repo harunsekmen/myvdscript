@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
+import { Markdown } from "@tiptap/markdown";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { collectImagePaths, type CopyMode } from "../lib/copyExport";
@@ -34,6 +35,10 @@ interface Props {
   onCopy: (mode: CopyMode) => Promise<void> | void;
   onCount: (label: string) => void;
 }
+
+/** Başlık, liste, alıntı, kod bloğu, kalın/italik ya da bağlantı içeren metin markdown sayılır. */
+const looksLikeMarkdown = (t: string) =>
+  /^(#{1,6}\s+\S|\s*[-*+]\s+\S|\s*\d+[.)]\s+\S|>\s?\S|```)/m.test(t) || /\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\n]+\)/.test(t);
 
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "webm", "ogg", "flac", "mpeg", "mpga"];
@@ -111,12 +116,19 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       Placeholder.configure({ placeholder: "Scriptini buraya yaz… (Ctrl+V ile resim yapıştırabilirsin)" }),
       ImageChip,
+      Markdown,
     ],
     content: project.editorDoc ?? "",
     shouldRerenderOnTransaction: true,
     editorProps: {
       attributes: { class: "tiptap-editor", spellcheck: "false" },
       handlePaste: (_v, event) => {
+        // Markdown yapısı taşıyan düz metin yapıştırılırsa biçimli olarak eklenir.
+        const plain = event.clipboardData?.getData("text/plain") ?? "";
+        if (!event.clipboardData?.files.length && looksLikeMarkdown(plain)) {
+          editorRef.current?.chain().focus().insertContent(plain, { contentType: "markdown" }).run();
+          return true;
+        }
         const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
         if (!files.length) return false;
         void insertImages(files);
