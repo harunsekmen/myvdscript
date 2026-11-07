@@ -1,15 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { FONT_OPTIONS } from "../lib/fonts";
-import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, MAX_STYLE_EXAMPLES } from "../lib/prompts";
-import { makeStylePairs, type StylePair } from "../lib/styleAlign";
+import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT } from "../lib/prompts";
 import type { Settings } from "../lib/types";
-
-/** Aday listesinde gösterilecek kısa metin. */
-const clipText = (s: string, max = 140) => (s.length > max ? s.slice(0, max) + "…" : s);
-
-/** Saniyeyi dk:sn olarak gösterir (aday zamanı için). */
-const fmtMinSec = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
 
 interface Props {
   settings: Settings;
@@ -102,11 +95,6 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
   const [groqMsg, setGroqMsg] = useState<{ text: string; err?: boolean } | null>(null);
-  const [srcFile, setSrcFile] = useState<File | null>(null);
-  const [tgtFile, setTgtFile] = useState<File | null>(null);
-  const [cands, setCands] = useState<StylePair[]>([]);
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [pairMsg, setPairMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -150,38 +138,6 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
       setBusy(false);
     }
   };
-
-  const findPairs = async () => {
-    if (!srcFile || !tgtFile) return;
-    try {
-      const pairs = makeStylePairs(await srcFile.text(), await tgtFile.text());
-      setCands(pairs);
-      setPicked(new Set());
-      setPairMsg(pairs.length ? `${pairs.length} aday bulundu` : "Eşleşen aday bulunamadı");
-    } catch (e) {
-      setPairMsg(String(e));
-    }
-  };
-
-  const addPicked = () => {
-    const room = Math.max(0, MAX_STYLE_EXAMPLES - s.styleExamples.length);
-    const chosen = cands
-      .filter((_, i) => picked.has(i))
-      .slice(0, room)
-      .map((p) => ({ source: p.source, target: p.target }));
-    onChange({ styleExamples: [...s.styleExamples, ...chosen] });
-    setPairMsg(`${chosen.length} örnek eklendi`);
-    setCands([]);
-    setPicked(new Set());
-  };
-
-  const togglePick = (i: number) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
 
   const range = (k: keyof Settings, label: string, min: number, max: number, step: number, unit = "") => (
     <Field label={label} aside={<b className="s-value">{s[k] as number}{unit}</b>}>
@@ -267,85 +223,6 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
           <Field label="İstem" aside={<button className="btn small ghost" onClick={() => onChange({ insightPrompt: DEFAULT_INSIGHT_PROMPT })}>Varsayılana dön</button>}>
             <textarea className="input mono" rows={6} value={s.insightPrompt} onChange={(e) => onChange({ insightPrompt: e.target.value })} />
           </Field>
-        </Block>
-        <Block title="Anlatım tarzı" hint="Çevirinin senin üslubunda çıkması için. Boş bırakırsan hiçbir şey eklenmez.">
-          <Field label="Üslup kılavuzu" aside={<span className="s-hint">cümle uzunluğu, geçiş kelimeleri, terim tercihi…</span>}>
-            <textarea
-              className="input"
-              rows={4}
-              value={s.styleGuide}
-              placeholder="Ör: Kısa cümleler kur. Geçişlerde 'peki' ve 'yani' kullan. Yazılım terimlerini İngilizce bırak."
-              onChange={(e) => onChange({ styleGuide: e.target.value })}
-            />
-          </Field>
-          <Field
-            label={`Örnek çiftleri (${s.styleExamples.length}/${MAX_STYLE_EXAMPLES})`}
-            aside={
-              <button
-                className="btn small ghost"
-                disabled={s.styleExamples.length >= MAX_STYLE_EXAMPLES}
-                onClick={() => onChange({ styleExamples: [...s.styleExamples, { source: "", target: "" }] })}
-              >
-                Örnek ekle
-              </button>
-            }
-          >
-            <div className="s-examples">
-              {s.styleExamples.map((ex, i) => (
-                <div key={i} className="s-example">
-                  <textarea
-                    className="input"
-                    rows={2}
-                    placeholder="Kaynak metin (orijinal)"
-                    value={ex.source}
-                    onChange={(e) => onChange({ styleExamples: s.styleExamples.map((x, j) => (j === i ? { ...x, source: e.target.value } : x)) })}
-                  />
-                  <textarea
-                    className="input"
-                    rows={2}
-                    placeholder="Senin istediğin Türkçe çıktı"
-                    value={ex.target}
-                    onChange={(e) => onChange({ styleExamples: s.styleExamples.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)) })}
-                  />
-                  <button className="btn small ghost" onClick={() => onChange({ styleExamples: s.styleExamples.filter((_, j) => j !== i) })}>Sil</button>
-                </div>
-              ))}
-            </div>
-          </Field>
-        </Block>
-        <Block title="Altyazıdan örnek bul" hint="Orijinal ve senin Türkçe altyazı dosyalarını seç; zamana göre eşleşen adaylar listelenir. Beğendiklerini işaretleyip ekle.">
-          <Field label="Kaynak altyazı (orijinal dil)">
-            <input className="input" type="file" accept=".srt,.vtt" onChange={(e) => setSrcFile(e.target.files?.[0] ?? null)} />
-          </Field>
-          <Field label="Senin Türkçe altyazın">
-            <input className="input" type="file" accept=".srt,.vtt" onChange={(e) => setTgtFile(e.target.files?.[0] ?? null)} />
-          </Field>
-          <div className="row">
-            <button className="btn" disabled={!srcFile || !tgtFile} onClick={findPairs}>Adayları bul</button>
-            {pairMsg && <span className="s-hint">{pairMsg}</span>}
-          </div>
-          {cands.length > 0 && (
-            <>
-              <div className="s-cands">
-                {cands.map((p, i) => (
-                  <label key={i} className="s-cand">
-                    <input type="checkbox" checked={picked.has(i)} onChange={() => togglePick(i)} />
-                    <span className="s-cand-body">
-                      <small className="s-hint">{fmtMinSec(p.start)}</small>
-                      <span className="s-cand-src">{clipText(p.source)}</span>
-                      <span className="s-cand-tgt">{clipText(p.target)}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <div className="row">
-                <button className="btn primary" disabled={picked.size === 0 || s.styleExamples.length >= MAX_STYLE_EXAMPLES} onClick={addPicked}>
-                  Seçilenleri ekle ({picked.size})
-                </button>
-                <span className="s-hint">En fazla {MAX_STYLE_EXAMPLES} örnek; şu an {s.styleExamples.length}.</span>
-              </div>
-            </>
-          )}
         </Block>
       </>
     ),

@@ -407,7 +407,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
               <button
                 className="btn small"
                 onClick={() => setCustomOpen(true)}
-                title="Altyazıyı varsayılan istem, anlatım tarzı ve örneklerle birlikte, kendi isteminizin ek olarak uygulandığı şekilde yeniden işleyin"
+                title="Altyazıyı varsayılan istemle birlikte, kendi isteminizin ek olarak uygulandığı şekilde yeniden işleyin"
               >
                 Özel istemle işle
               </button>
@@ -567,7 +567,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
       {customOpen && (
         <PromptDialog
           title="Özel istemle işle"
-          hint="Altyazı, ayarlardaki sistem istemi, anlatım tarzı ve örnek çiftleriyle birlikte yeniden işlenir; yazdığınız istem bunların üstüne ek talimat olarak eklenir. Mevcut bölümler ve açıklama vurguları yenilenir. Ctrl+Enter ile çalıştırabilirsiniz."
+          hint="Altyazı, ayarlardaki sistem istemiyle yeniden işlenir; yazdığınız istem onun üstüne ek talimat olarak eklenir. Mevcut bölümler ve açıklama vurguları yenilenir. Ctrl+Enter ile çalıştırabilirsiniz."
           placeholder={CUSTOM_PROMPT_PLACEHOLDER}
           confirmLabel="Çalıştır"
           onCancel={() => setCustomOpen(false)}

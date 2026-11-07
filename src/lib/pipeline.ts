@@ -1,5 +1,5 @@
 import { api, streamChat, type StreamHandle } from "./api";
-import { buildChunkMessage, buildSystemWithStyle } from "./prompts";
+import { buildChunkMessage } from "./prompts";
 import { chunkText, parseSegments } from "./segmentParser";
 import type { Segment, Settings } from "./types";
 
@@ -25,7 +25,7 @@ export function processTranscript(
 
   const promise = (async () => {
     const chunks = chunkText(transcript, s.chunkChars);
-    const system = buildSystemWithStyle(s);
+    const system = s.systemPrompt;
     let acc = "";
     onProgress({ done: 0, total: chunks.length });
     for (let i = 0; i < chunks.length; i++) {

@@ -418,12 +418,3 @@ mark.hl:hover { background: #f2b44d55; }
 .reader-scroll span[data-t] { border-radius: 6px; transition: background .18s; }
 .reader-scroll span.cur { background: #6c8cff40; color: #fff; }
 .ytdlp-note { padding: 4px 12px; font-size: 12.5px; }
-.s-examples { display: flex; flex-direction: column; gap: 10px; }
-.s-example { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: start; }
-.s-example .btn { align-self: center; }
-.s-cands { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; border: 1px solid var(--border, #ffffff1a); border-radius: 8px; padding: 6px; }
-.s-cand { display: flex; gap: 8px; align-items: flex-start; padding: 6px; border-radius: 6px; cursor: pointer; }
-.s-cand:hover { background: #ffffff0d; }
-.s-cand-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.s-cand-src { color: var(--muted); font-size: 12.5px; }
-.s-cand-tgt { font-size: 13px; }

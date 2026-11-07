@@ -71,12 +71,6 @@ export interface ProjectMeta {
   updatedAt: number;
 }
 
-/** Anlatım tarzı için bir örnek çifti: kaynak metin ve kullanıcının istediği Türkçe çıktı. */
-export interface StyleExample {
-  source: string;
-  target: string;
-}
-
 export interface Settings {
   baseUrl: string;
   model: string;
@@ -84,8 +78,6 @@ export interface Settings {
   temperature: number;
   systemPrompt: string;
   insightPrompt: string;
-  styleGuide: string; // anlatım tarzı kılavuzu (boşsa eklenmez)
-  styleExamples: StyleExample[]; // kaynak → Türkçe örnek çiftleri (en fazla 5)
   uiFont: string;
   readFont: string;
   writeFont: string;

@@ -6,7 +6,7 @@ import { createAutosaver, type SaveStatus } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
 import { processTranscript, type PipelineRun } from "./lib/pipeline";
-import { buildCustomRunSystemPrompt, DEFAULT_INSIGHT_PROMPT, DEFAULT_STYLE_GUIDE, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
+import { buildCustomRunSystemPrompt, DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
 import { segmentsToMarkdown } from "./lib/segmentParser";
 import { exportTimed, normalizeTimed } from "./lib/timed";
 import type { ImageMeta, Insight, Project, ProjectMeta, Segment, Settings, TimedDoc } from "./lib/types";
@@ -28,8 +28,6 @@ const DEFAULTS: Settings = {
   temperature: 0.3,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   insightPrompt: DEFAULT_INSIGHT_PROMPT,
-  styleGuide: DEFAULT_STYLE_GUIDE,
-  styleExamples: [],
   uiFont: "Inter",
   readFont: "Source Serif 4",
   writeFont: "Literata",
@@ -129,7 +127,7 @@ export default function App() {
       const s: Settings = { ...DEFAULTS, ...loaded };
       if (!s.systemPrompt.trim() || LEGACY_SYSTEM_PROMPTS.includes(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       if (!s.insightPrompt.trim()) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
-      if (!s.styleGuide?.trim()) s.styleGuide = DEFAULT_STYLE_GUIDE;      settingsRef.current = s;
+      settingsRef.current = s;
       setSettings(s);
       const key = await api.hasApiKey();
       setHasKey(key);
@@ -187,7 +185,6 @@ export default function App() {
     async (text: string, customPrompt?: string) => {
       const pid = projectRef.current?.id;
       // Özel istem: temel sistem istemi korunur, kullanıcının istemi ek talimat olarak eklenir.
-      // Anlatım tarzı ve örnek çiftleri processTranscript içinde (buildSystemWithStyle) her işleme eklenir.
       const s = customPrompt
         ? { ...settingsRef.current, systemPrompt: buildCustomRunSystemPrompt(settingsRef.current.systemPrompt, customPrompt) }
         : settingsRef.current;
