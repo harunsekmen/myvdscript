@@ -422,4 +422,5 @@ mark.hl:hover { background: #f2b44d55; }
 .copy-btn .menu button:hover { background: #2f3446; }
 .orig-bar { margin-bottom: 8px; }
 .tnum { font-variant-numeric: tabular-nums; }
-.status-save { min-width: 130px; text-align: right; }
+.status-save.ok { color: #5fb894; }
+.status-count { padding-left: 12px; border-left: 1px solid var(--line); }

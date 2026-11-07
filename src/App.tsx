@@ -512,8 +512,12 @@ export default function App() {
           {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+Shift+C kopyala
         </span>
         <span className="spacer" />
-        {project && wordCount && <span className="muted tnum">{wordCount} ·</span>}
-        <span className={"status-save " + (status.s === "error" ? "err" : "muted")}>{statusText}</span>
+        {project && (
+          <span className={"status-save " + (status.s === "error" ? "err" : status.s === "saved" || status.s === "idle" ? "ok" : "muted")}>
+            {statusText || "Kaydedildi ✓"}
+          </span>
+        )}
+        {project && wordCount && <span className="status-count muted tnum">{wordCount}</span>}
       </footer>
 
       {showSettings && (
