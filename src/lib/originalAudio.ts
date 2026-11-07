@@ -59,6 +59,11 @@ function sourceFor(projectId: string, url: string): Promise<string> {
   return p;
 }
 
+/** Sesi arka planda önceden indirir; çift tıklayınca aynı indirme beklenir. */
+export function prefetchAudio(projectId: string, url: string) {
+  sourceFor(projectId, url).catch(() => {});
+}
+
 /** Bu proje/URL için oynatıcıyı hazırlar (gerekirse indirir). */
 async function ensure(projectId: string, url: string): Promise<HTMLAudioElement> {
   if (audio && st.projectId === projectId && st.url === url && st.status === "ready") return audio;

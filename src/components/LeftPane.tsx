@@ -4,7 +4,7 @@ import { segStyle } from "../lib/colors";
 import { buildInsightMessage } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
 import { speak } from "../lib/speech";
-import { getAudioState, pauseOriginal, playAt, seekTo, stopOriginal, subscribeAudio } from "../lib/originalAudio";
+import { getAudioState, pauseOriginal, playAt, prefetchAudio, seekTo, stopOriginal, subscribeAudio } from "../lib/originalAudio";
 import type { Insight, Project, Segment, SentenceMark, Settings } from "../lib/types";
 import type { Progress } from "../lib/pipeline";
 import { InsightCard } from "./InsightCard";
@@ -130,6 +130,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   const [activeId, setActiveId] = useState<string | null>(null);
   const [live, setLive] = useState<{ id: string; text: string; error?: string } | null>(null);
   const [tick, setTick] = useState(0);
+  const [videoFrom, setVideoFrom] = useState<number | null>(null);
   const [activeSeg, setActiveSeg] = useState(0);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -146,6 +147,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     setActiveId(null);
     setSel(null);
     setLive(null);
+    setVideoFrom(null);
   }, [project.id]);
 
   const readSelection = useCallback(() => {
@@ -281,6 +283,11 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     );
   };
 
+  // Zaman işaretleri hazır olunca ses arka planda inmeye başlar.
+  useEffect(() => {
+    if (hasAudio && !proc.running) prefetchAudio(project.id, project.url);
+  }, [hasAudio, proc.running, project.id, project.url]);
+
   // Altyazı (İngilizce) satırları: oynatıcıda çalan cümlenin kaynağını yumuşakça göstermek için.
   const cues = useMemo(() => parseCues(project.transcriptRaw), [project.transcriptRaw]);
   const enLine = audioHere && audio.status === "ready" ? cueAt(cues, audio.time) : "";
@@ -295,6 +302,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     window.getSelection()?.removeAllRanges();
     setSel(null);
     const t = Number(tAttr);
+    setVideoFrom(t);
     const segId = el.closest<HTMLElement>("p[data-seg]")?.dataset.seg;
     const marks = segments.find((s) => s.id === segId)?.marks;
     const end = marks?.find((m) => m.t > t)?.t ?? t + 25; // sonraki cümlenin başı; yoksa kısa bir pencere
@@ -304,7 +312,17 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   };
 
   const openVideo = () => {
-    api.openExternal(project.url).catch((e) => onToast(`Video açılamadı: ${e}`, "error"));
+    let target = project.url;
+    if (videoFrom != null) {
+      try {
+        const u = new URL(project.url);
+        u.searchParams.set("t", `${Math.floor(videoFrom)}s`);
+        target = u.toString();
+      } catch {
+        /* geçersiz URL: olduğu gibi aç */
+      }
+    }
+    api.openExternal(target).catch((e) => onToast(`Video açılamadı: ${e}`, "error"));
   };
   const hasVideo = /^https?:\/\//.test(project.url);
 
@@ -384,7 +402,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
         <span className="pane-title">Kaynak metin</span>
         {hasVideo && (
           <button className="btn small video-link" onClick={openVideo} title={project.url}>
-            ▶ Videoyu aç
+            {videoFrom != null ? `▶ ${fmtClock(videoFrom)}'den aç` : "▶ Videoyu aç"}
           </button>
         )}
         {proc.running ? (
