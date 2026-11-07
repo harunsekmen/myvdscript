@@ -114,7 +114,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+      StarterKit.configure({ heading: { levels: [1, 2, 3, 4, 5, 6] } }),
       Placeholder.configure({ placeholder: "Scriptini buraya yaz… (Ctrl+V ile resim yapıştırabilirsin)" }),
       ImageChip,
       Markdown,
