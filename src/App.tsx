@@ -20,29 +20,9 @@ import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sour
 import { exportTimed } from "./lib/timed";
 import type { ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
+import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
 
-const DEFAULTS: Settings = {
-  baseUrl: "https://api.openai.com/v1",
-  model: "",
-  insightModel: "",
-  temperature: 0.3,
-  systemPrompt: DEFAULT_SYSTEM_PROMPT,
-  insightPrompt: DEFAULT_INSIGHT_PROMPT,
-  uiFont: "Inter",
-  readFont: "Source Serif 4",
-  writeFont: "Literata",
-  fontSize: 17,
-  lineHeight: 1.75,
-  textWidth: 720,
-  splitRatio: 0.5,
-  splitLeft: 0.36,
-  splitMid: 0.26,
-  segmentTint: 0.12,
-  chunkChars: 6000,
-  lastProjectId: "",
-  sttLanguage: "",
-  cookiesBrowser: "",
-};
+const DEFAULTS = DEFAULT_SETTINGS;
 
 type Dialog =
   | { kind: "link" }
