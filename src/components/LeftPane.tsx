@@ -1,38 +1,36 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { onYtdlpStatus, streamChat } from "../lib/api";
 import { segStyle } from "../lib/colors";
-import { buildInsightMessage } from "../lib/prompts";
+import { buildInsightMessage, CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
+import { activeSource, sourceLabel } from "../lib/sources";
 import { speak } from "../lib/speech";
+import type { Insight, ProcState, Project, SentenceMark, Settings } from "../lib/types";
 import { getVideoState, playAt, subscribeVideo, videoIdOf } from "../lib/youtube";
-import type { Insight, Project, Segment, SentenceMark, Settings } from "../lib/types";
-import type { Progress } from "../lib/pipeline";
-import { InsightCard } from "./InsightCard";
 import { PromptDialog } from "./Dialogs";
+import { InsightCard } from "./InsightCard";
 import { SpeakIcon } from "./SpeakIcon";
 
 /** Seslendirme tek seferde en fazla bu kadar karakteri okur (sağ panelle aynı sınır). */
 const SPEAK_MAX_CHARS = 200;
-import { CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
-
-export interface ProcState {
-  running: boolean;
-  phase: "transcript" | "ai" | null;
-  progress: Progress | null;
-  error: string | null;
-  live: Segment[] | null;
-}
 
 interface Props {
   project: Project;
   settings: Settings;
   models: string[];
   proc: ProcState;
-  onInsights: (insights: Insight[]) => void;
+  onInsights: (sourceId: string, insights: Insight[]) => void;
   onReprocess: () => void;
   onCustomRun: (prompt: string) => void;
   onCancel: () => void;
+  onResume: () => void;
+  /** Etkin (boş) kaynak için bağlantı + isteğe bağlı başlıkla başlat. */
   onFetchUrl: (url: string, title?: string) => void;
+  onSelectSource: (id: string) => void;
+  onAddSource: (url: string, title?: string) => void;
+  onRemoveSource: (id: string) => void;
+  onPickSubtitle: () => void;
+  onRestore: (index: number) => void;
   onToast: (msg: string, kind?: "error" | "info") => void;
 }
 
@@ -100,8 +98,72 @@ function renderPara(text: string, insights: Insight[], onOpen: (id: string) => v
   return out;
 }
 
-export function LeftPane({ project, settings, models, proc, onInsights, onReprocess, onCustomRun, onCancel, onFetchUrl, onToast }: Props) {
-  const segments = proc.live ?? project.segments;
+/** Bağlantı + isteğe bağlı başlık girişi (ilk kaynak ve "＋ Kaynak" için ortak). */
+function LinkForm({
+  initialUrl = "",
+  initialTitle = "",
+  submitLabel,
+  autoFocus,
+  onSubmit,
+}: {
+  initialUrl?: string;
+  initialTitle?: string;
+  submitLabel: string;
+  autoFocus?: boolean;
+  onSubmit: (url: string, title?: string) => void;
+}) {
+  const [url, setUrl] = useState(initialUrl);
+  const [title, setTitle] = useState(initialTitle);
+  const go = () => url.trim() && onSubmit(url.trim(), title.trim() || undefined);
+  return (
+    <div className="link-start">
+      <input
+        className="input"
+        placeholder="https://www.youtube.com/watch?v=…"
+        spellCheck={false}
+        autoFocus={autoFocus}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && go()}
+      />
+      <input
+        className="input"
+        placeholder="Başlık (isteğe bağlı)"
+        spellCheck={false}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && go()}
+      />
+      <button className="btn primary" disabled={!url.trim()} onClick={go}>
+        {submitLabel}
+      </button>
+    </div>
+  );
+}
+
+export function LeftPane({
+  project,
+  settings,
+  models,
+  proc,
+  onInsights,
+  onReprocess,
+  onCustomRun,
+  onCancel,
+  onResume,
+  onFetchUrl,
+  onSelectSource,
+  onAddSource,
+  onRemoveSource,
+  onPickSubtitle,
+  onRestore,
+  onToast,
+}: Props) {
+  const source = activeSource(project);
+  // Çalışan işlem başka bir kaynağa aitse bu sekmede boşta görünür; canlı akış yalnız kendi kaynağında gösterilir.
+  const mine = proc.sourceId === source.id;
+  const busyHere = proc.running && mine;
+  const segments = mine && proc.live ? proc.live : source.segments;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [sel, setSel] = useState<Sel | null>(null);
@@ -111,21 +173,21 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   const [procMenu, setProcMenu] = useState(false);
   const procRef = useRef<HTMLDivElement>(null);
   const [activeSeg, setActiveSeg] = useState(0);
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
+  const [adding, setAdding] = useState(false);
   const runRef = useRef<{ id: string; cancel: () => void } | null>(null);
-  const insightsRef = useRef(project.insights);
-  insightsRef.current = project.insights;
+  const insightsRef = useRef(source.insights);
+  insightsRef.current = source.insights;
 
   const paras = useMemo(() => new Map(segments.map((s) => [s.id, paragraphsOf(s.text)])), [segments]);
 
-  // Proje değişince açık kart/seçim kapanır.
+  // Proje ya da kaynak değişince açık kart/seçim kapanır (açıklama sonucu yanlış kaynağa yazılmasın).
   useEffect(() => {
     runRef.current?.cancel();
     setActiveId(null);
     setSel(null);
     setLive(null);
-  }, [project.id]);
+    setAdding(false);
+  }, [project.id, source.id]);
 
   const readSelection = useCallback(() => {
     const s = window.getSelection();
@@ -172,6 +234,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
 
   const runInsight = useCallback(
     (insight: Insight, model: string, context: string) => {
+      const sourceId = source.id;
       runRef.current?.cancel();
       const h = streamChat({
         baseUrl: settings.baseUrl,
@@ -186,7 +249,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
       h.done
         .then((text) => {
           const res = { id: crypto.randomUUID(), model, text: text.trim(), createdAt: Date.now() };
-          onInsights(insightsRef.current.map((i) => (i.id === insight.id ? { ...i, results: [...i.results, res] } : i)));
+          onInsights(sourceId, insightsRef.current.map((i) => (i.id === insight.id ? { ...i, results: [...i.results, res] } : i)));
           setLive(null);
         })
         .catch((e) => {
@@ -194,7 +257,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
           setLive({ id: insight.id, text: "", error: e.message });
         });
     },
-    [settings, onInsights],
+    [settings, onInsights, source.id],
   );
 
   const explain = () => {
@@ -209,7 +272,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
       quote: sel.quote,
       results: [],
     };
-    onInsights([...project.insights, insight]);
+    onInsights(source.id, [...source.insights, insight]);
     insightsRef.current = [...insightsRef.current, insight];
     setActiveId(insight.id);
     window.getSelection()?.removeAllRanges();
@@ -234,7 +297,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
 
   // Orta paneldeki gömülü video: çalan cümlenin vurgusu.
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
-  const videoId = videoIdOf(project.url);
+  const videoId = videoIdOf(source.url);
   const hasVideo = !!videoId && segments.some((s) => s.marks?.length);
   // Vurgu yalnızca video çalarken: duraklayınca ya da cümle bitince seçili kalmaz.
   const activeSent = useMemo(() => {
@@ -285,12 +348,12 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     return [list[i.para - 1], list[i.para], list[i.para + 1]].filter(Boolean).join("\n\n");
   };
 
-  const active = project.insights.find((i) => i.id === activeId) ?? null;
+  const active = source.insights.find((i) => i.id === activeId) ?? null;
 
   const closeCard = () => setActiveId(null);
   const removeInsight = (id: string) => {
     if (runRef.current?.id === id) runRef.current.cancel();
-    onInsights(project.insights.filter((i) => i.id !== id));
+    onInsights(source.id, source.insights.filter((i) => i.id !== id));
     setActiveId(null);
     setLive(null);
   };
@@ -317,8 +380,8 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
   const stickRef = useRef(true);
   useLayoutEffect(() => {
     const sc = scrollRef.current;
-    if (sc && proc.running && stickRef.current) sc.scrollTop = sc.scrollHeight;
-  }, [segments, proc.running]);
+    if (sc && busyHere && stickRef.current) sc.scrollTop = sc.scrollHeight;
+  }, [segments, busyHere]);
 
   const anchorRect = active ? scrollRef.current?.querySelector(`[data-insight="${active.id}"]`)?.getBoundingClientRect() ?? null : null;
   void tick;
@@ -347,31 +410,42 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
     };
   }, [proc.running]);
 
+  const busyElsewhere = proc.running && !mine;
+  const hasContent = !!source.transcriptRaw || segments.length > 0;
+  const showTabs = project.sources.length > 1 || !!source.url || hasContent;
+  const history = source.history ?? [];
+  const fmtTime = (t: number) => new Date(t).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const closeMenu = () => setProcMenu(false);
+
   return (
     <div className="pane left-pane">
       <div className="pane-head">
         <span className="pane-title">Kaynak metin</span>
-        {proc.running ? (
+        {busyHere ? (
           <>
             <span className="muted">
               {proc.phase === "transcript"
                 ? `Altyazı çekiliyor… ${elapsed} sn`
-                : `İşleniyor ${proc.progress?.done ?? 0}/${proc.progress?.total ?? "?"}`}
+                : proc.phase === "subs"
+                  ? `Altyazı listesi alınıyor… ${elapsed} sn`
+                  : `İşleniyor ${proc.progress?.done ?? 0}/${proc.progress?.total ?? "?"}`}
             </span>
             <button className="btn small" onClick={onCancel}>İptal</button>
           </>
+        ) : busyElsewhere ? (
+          <span className="muted">Başka bir kaynak işleniyor…</span>
         ) : (
-          (project.transcriptRaw || segments.length > 0) && (
+          (hasContent || !!source.url) && (
             <div className="dropdown" ref={procRef}>
               <button className="btn small" onClick={() => setProcMenu(!procMenu)} title="Altyazıyı AI ile yeniden işle">
                 Yeniden işle ▾
               </button>
               {procMenu && (
                 <div className="menu right proc-menu">
-                  {project.transcriptRaw && (
+                  {source.transcriptRaw && (
                     <button
                       onClick={() => {
-                        setProcMenu(false);
+                        closeMenu();
                         onReprocess();
                       }}
                     >
@@ -381,12 +455,40 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
                   {segments.length > 0 && (
                     <button
                       onClick={() => {
-                        setProcMenu(false);
+                        closeMenu();
                         setCustomOpen(true);
                       }}
                     >
                       Özel istemle işle… <span className="muted">Varsayılan istemin üstüne kendi talimatın</span>
                     </button>
+                  )}
+                  {source.url.trim() && (
+                    <button
+                      onClick={() => {
+                        closeMenu();
+                        onPickSubtitle();
+                      }}
+                    >
+                      Başka altyazı seç… <span className="muted">Videodaki diğer diller</span>
+                    </button>
+                  )}
+                  {history.length > 0 && (
+                    <>
+                      <div className="menu-sep" />
+                      <div className="menu-label muted">Önceki işlemeye dön</div>
+                      {history.map((h, i) => (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            closeMenu();
+                            onRestore(i);
+                          }}
+                          title={`${h.segments.length} bölüm`}
+                        >
+                          <span>{fmtTime(h.createdAt)}</span> <span className="muted">{h.label}</span>
+                        </button>
+                      ))}
+                    </>
                   )}
                 </div>
               )}
@@ -394,18 +496,68 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
           )
         )}
       </div>
-      {proc.running && proc.phase === "transcript" && (
+      {showTabs && (
+        <div className="source-tabs" role="tablist">
+          {project.sources.map((s, i) => (
+            <div
+              key={s.id}
+              className={"source-tab" + (s.id === source.id ? " on" : "") + (proc.running && proc.sourceId === s.id ? " busy" : "")}
+            >
+              <button
+                className="source-tab-btn"
+                role="tab"
+                aria-selected={s.id === source.id}
+                title={s.url ? `${sourceLabel(s, i)}\n${s.url}` : sourceLabel(s, i)}
+                onClick={() => onSelectSource(s.id)}
+              >
+                {sourceLabel(s, i)}
+              </button>
+              {(project.sources.length > 1 || s.url || s.segments.length > 0) && (
+                <button className="source-tab-x" title="Kaynağı sil" aria-label="Kaynağı sil" onClick={() => onRemoveSource(s.id)}>
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            className="source-add"
+            disabled={proc.running}
+            title={proc.running ? "İşlem bitince yeni kaynak eklenebilir" : "Başka bir YouTube videosunu kaynak olarak ekle"}
+            onClick={() => setAdding((a) => !a)}
+          >
+            ＋ Kaynak
+          </button>
+        </div>
+      )}
+      {adding && (
+        <div className="source-add-form">
+          <LinkForm
+            submitLabel="Ekle"
+            autoFocus
+            onSubmit={(u, t) => {
+              setAdding(false);
+              onAddSource(u, t);
+            }}
+          />
+        </div>
+      )}
+      {busyHere && (proc.phase === "transcript" || proc.phase === "subs") && (
         <div className="ytdlp-note muted">{note || "İşlem başlatılıyor…"}</div>
       )}
-      {proc.running && proc.phase === "ai" && (
+      {busyHere && proc.phase === "ai" && (
         <div className="progress"><div style={{ width: `${Math.max(4, pct)}%` }} /></div>
       )}
-      {proc.error && (
+      {proc.error && mine && (
         <div className="banner error">
           <span>{proc.error}</span>
-          {project.transcriptRaw ? (
-            <button className="btn small" onClick={onReprocess}>Yeniden dene</button>
-          ) : null}
+          <span className="banner-actions">
+            {proc.resumable && (
+              <button className="btn small" onClick={onResume}>Kaldığı yerden devam et</button>
+            )}
+            {(source.transcriptRaw || source.url.trim()) && (
+              <button className="btn small" onClick={onReprocess}>Yeniden dene</button>
+            )}
+          </span>
         </div>
       )}
 
@@ -433,31 +585,11 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
           }}
         >
           <div className="reader-col">
-            {segments.length === 0 && !proc.running && (
+            {segments.length === 0 && !busyHere && (
               <div className="empty start-empty">
                 <p className="start-title">Henüz kaynak metin yok</p>
                 <p className="muted">Bir YouTube bağlantısı yapıştırın; altyazı çekilip Türkçe'ye düzenlenecek.</p>
-                <div className="link-start">
-                  <input
-                    className="input"
-                    placeholder="https://www.youtube.com/watch?v=…"
-                    spellCheck={false}
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && url.trim() && onFetchUrl(url.trim(), title)}
-                  />
-                  <input
-                    className="input"
-                    placeholder="Başlık (isteğe bağlı)"
-                    spellCheck={false}
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && url.trim() && onFetchUrl(url.trim(), title)}
-                  />
-                  <button className="btn primary" disabled={!url.trim()} onClick={() => onFetchUrl(url.trim(), title)}>
-                    Başlat
-                  </button>
-                </div>
+                <LinkForm key={source.id} initialUrl={source.url} initialTitle={source.title} submitLabel="Başlat" onSubmit={onFetchUrl} />
               </div>
             )}
             {segments.map((seg, i) => {
@@ -471,7 +603,7 @@ export function LeftPane({ project, settings, models, proc, onInsights, onReproc
                   <div className="seg-label" style={{ color: st.label }}>{seg.title}</div>
                   {(paras.get(seg.id) ?? []).map((p, pi) => (
                     <p key={pi} data-seg={seg.id} data-para={pi} onDoubleClick={onParaDoubleClick}>
-                      {renderPara(p, project.insights, setActiveId, {
+                      {renderPara(p, source.insights, setActiveId, {
                         segId: seg.id,
                         para: pi,
                         marks: seg.marks,

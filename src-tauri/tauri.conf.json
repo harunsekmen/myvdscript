@@ -21,7 +21,10 @@
         "decorations": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["$DATA/ScriptAtolyesi/projects/**/*"] }
+    }
   },
   "bundle": {
     "active": true,

@@ -1,8 +1,9 @@
 mod commands;
+mod http;
 mod store;
 mod ytdlp;
 
-use commands::{ai, external, images, projects, settings, stt, transcript, tts};
+use commands::{ai, export, external, images, projects, settings, stt, transcript, tts};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,6 +52,7 @@ pub fn run() {
             tts::tts,
             transcript::video_meta,
             external::open_external,
+            export::save_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("uygulama başlatılamadı");

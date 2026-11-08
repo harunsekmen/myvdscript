@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "../lib/api";
 import type { ImageMeta } from "../lib/types";
 
@@ -14,8 +15,16 @@ export function ImageViewer({ path, meta, onNote, onClose }: Props) {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api.readImage(path).then(setSrc).catch((e) => setErr(String(e)));
+    // Önce asset protokolü (base64 yok); yüklenemezse onError ile readImage'e düşülür.
+    setErr(null);
+    setSrc(convertFileSrc(path));
   }, [path]);
+
+  // Asset URL'si yüklenemezse (kapsam/izin) Rust komutuyla base64 olarak oku.
+  const fallback = () => {
+    if (src?.startsWith("data:")) return setErr("Resim yüklenemedi");
+    api.readImage(path).then(setSrc).catch((e) => setErr(String(e)));
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -31,7 +40,7 @@ export function ImageViewer({ path, meta, onNote, onClose }: Props) {
           <button className="icon-btn" onClick={onClose}>✕</button>
         </div>
         <div className="image-stage">
-          {err ? <div className="banner error">{err}</div> : src ? <img src={src} alt={meta.name} /> : <div className="muted">Yükleniyor…</div>}
+          {err ? <div className="banner error">{err}</div> : src ? <img src={src} alt={meta.name} onError={fallback} /> : <div className="muted">Yükleniyor…</div>}
         </div>
         <div className="image-note">
           <label className="muted" htmlFor="img-note">Not (kopyalanan çıktıya eklenir)</label>

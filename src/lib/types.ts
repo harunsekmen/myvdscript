@@ -47,20 +47,57 @@ export interface TimedDoc {
   items: TimedItem[];
   /** AI'ın önerdiği düzeltmeler: kelime kimliği → önerilen metin (onaylanana kadar bekler) */
   suggestions?: Record<string, string>;
+  /** Kesim listesi tercihleri: sessizlik eşiği (sn) ve kullanıcının varsayılanı değiştirdiği öneri kimlikleri */
+  cuts?: { silenceSec?: number; off?: string[]; on?: string[] };
+}
+
+/** Yeniden işlemeden önceki sürüm: geri dönmek için saklanır. */
+export interface HistoryEntry {
+  segments: Segment[];
+  insights: Insight[];
+  createdAt: number; // bu sürümün üretildiği an
+  label: string;
+}
+
+/** Bir projedeki kaynak video: kendi altyazısı, işlenmiş bölümleri ve açıklamaları vardır. */
+export interface Source {
+  id: string;
+  url: string;
+  title: string;
+  transcriptRaw: string;
+  segments: Segment[];
+  insights: Insight[];
+  createdAt: number;
+  /** Güncel sürümün üretim zamanı ve açıklaması (geçmişe girerken kullanılır). */
+  processedAt?: number;
+  procLabel?: string;
+  history?: HistoryEntry[]; // en yeni başta, en çok 3
 }
 
 export interface Project {
   id: string;
   title: string;
-  url: string;
+  url: string; // diskte her zaman ilk kaynağın bağlantısı (proje listesi için)
   createdAt: number;
   updatedAt: number;
-  transcriptRaw: string;
-  segments: Segment[];
-  insights: Insight[];
+  sources: Source[];
+  activeSourceId: string;
   editorDoc: any | null; // TipTap JSON
   timed?: TimedDoc | null;
   imageMeta: Record<string, ImageMeta>;
+}
+
+/** Arka plan işleminin (altyazı çekme / AI) anlık durumu; tek seferde tek işlem çalışır. */
+export interface ProcState {
+  running: boolean;
+  phase: "transcript" | "subs" | "ai" | null;
+  progress: { done: number; total: number } | null;
+  error: string | null;
+  live: Segment[] | null;
+  /** İşlemin ait olduğu kaynak (sekme değişse de sonuç buraya yazılır). */
+  sourceId: string | null;
+  /** Hata sonrası kaldığı yerden devam edilebilir mi? */
+  resumable: boolean;
 }
 
 export interface ProjectMeta {

@@ -1,27 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { api } from "./lib/api";
-import { createAutosaver, type SaveStatus } from "./lib/autosave";
-import { exportDoc, type CopyMode } from "./lib/copyExport";
-import { fontCss } from "./lib/fonts";
-import { processTranscript, type PipelineRun } from "./lib/pipeline";
-import { buildCustomRunSystemPrompt, DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./lib/prompts";
-import { segmentsToMarkdown } from "./lib/segmentParser";
-import { exportTimed, normalizeTimed } from "./lib/timed";
-import type { ImageMeta, Insight, Project, ProjectMeta, Segment, Settings, TimedDoc } from "./lib/types";
-
-/** Diskten okunan projeyi güncel şemaya getirir (eski kelimelere kimlik ekler). */
-const withSchema = (p: Project): Project => ({ ...p, timed: p.timed ? normalizeTimed(p.timed) : null });
 import { ConfirmDialog, TextDialog } from "./components/Dialogs";
-import { LeftPane, type ProcState } from "./components/LeftPane";
+import { LeftPane } from "./components/LeftPane";
 import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { SubtitlePicker } from "./components/SubtitlePicker";
 import { TopBar } from "./components/TopBar";
 import { VideoPanel } from "./components/VideoPanel";
+import { usePipeline } from "./hooks/usePipeline";
+import { useProjectStore, type PipelineLifecycle } from "./hooks/useProjectStore";
+import { useSplitLayout } from "./hooks/useSplitLayout";
+import { api } from "./lib/api";
+import { createAutosaver } from "./lib/autosave";
+import { exportDoc, type CopyMode } from "./lib/copyExport";
+import { fontCss } from "./lib/fonts";
+import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacySystemPrompt } from "./lib/prompts";
+import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sources";
+import { exportTimed } from "./lib/timed";
+import type { ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
-import { SubtitlePicker } from "./components/SubtitlePicker";
-import type { SubOption, SubtitleList } from "./lib/api";
 
 const DEFAULTS: Settings = {
   baseUrl: "https://api.openai.com/v1",
@@ -46,14 +44,12 @@ const DEFAULTS: Settings = {
   cookiesBrowser: "",
 };
 
-const IDLE: ProcState = { running: false, phase: null, progress: null, error: null, live: null };
-const NEW_TITLES = ["Yeni proje", "Yükleniyor…"];
-
 type Dialog =
   | { kind: "link" }
   | { kind: "rename" }
   | { kind: "delete" }
   | { kind: "clear" }
+  | { kind: "removeSource"; id: string }
   | null;
 
 interface Toast { id: number; msg: string; kind: "error" | "info" }
@@ -65,26 +61,14 @@ export default function App() {
   const [hasGroqKey, setHasGroqKey] = useState(false);
   const [tab, setTab] = useState<RightTab>("write");
   const [models, setModels] = useState<string[]>([]);
-  const [projects, setProjects] = useState<ProjectMeta[]>([]);
-  const [project, setProject] = useState<Project | null>(null);
-  const projectRef = useRef<Project | null>(null);
   const getDocRef = useRef<() => any>(() => null);
-  const [status, setStatus] = useState<{ s: SaveStatus; err?: string }>({ s: "idle" });
-  const [proc, setProc] = useState<ProcState>(IDLE);
-  const runRef = useRef<PipelineRun | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
-  // Linkten gelen videonun altyazı seçimi bekleniyor mu?
-  const [subPick, setSubPick] = useState<{ url: string; list: SubtitleList } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [openSignal, setOpenSignal] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [ready, setReady] = useState(false);
   const [wordCount, setWordCount] = useState("");
 
-  const saver = useMemo(
-    () => createAutosaver<Project>((p) => api.saveProject(p), (s, err) => setStatus({ s, err })),
-    [],
-  );
   const settingsSaver = useMemo(() => createAutosaver<Settings>((s) => api.saveSettings(s), () => {}, 500), []);
 
   const toast = useCallback((msg: string, kind: "error" | "info" = "info") => {
@@ -103,19 +87,18 @@ export default function App() {
     [settingsSaver],
   );
 
-  const mutate = useCallback(
-    (fn: (p: Project) => Project, render = true) => {
-      const cur = projectRef.current;
-      if (!cur) return;
-      const next = fn(cur);
-      projectRef.current = next;
-      if (render) setProject(next);
-      saver.schedule(next);
+  // Proje durumu ile işleme hattı birbirine bağlıdır (proje değişince işlem iptal edilir); kanca ref ile kurulur.
+  const lifecycle = useRef<PipelineLifecycle>({ cancel: () => {}, reset: () => {} });
+  const { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, rename, deleteCurrent, clearAll } =
+    useProjectStore({ patchSettings, lifecycle });
+  const pipe = usePipeline({ projectRef, mutate, settingsRef, toast, openSettings: () => setShowSettings(true) });
+  lifecycle.current = {
+    cancel: pipe.cancelRun,
+    reset: () => {
+      pipe.reset();
+      setTab("write");
     },
-    [saver],
-  );
-
-  const refreshProjects = useCallback(async () => setProjects(await api.listProjects()), []);
+  };
 
   const refreshModels = useCallback(async () => {
     try {
@@ -130,28 +113,20 @@ export default function App() {
     (async () => {
       const loaded = await api.loadSettings();
       const s: Settings = { ...DEFAULTS, ...loaded };
-      if (!s.systemPrompt.trim() || LEGACY_SYSTEM_PROMPTS.includes(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+      if (!s.systemPrompt.trim() || isLegacySystemPrompt(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       if (!s.insightPrompt.trim()) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
       settingsRef.current = s;
       setSettings(s);
-      const key = await api.hasApiKey();
-      setHasKey(key);
+      setHasKey(await api.hasApiKey());
       setHasGroqKey(await api.hasGroqKey());
-      const list = await api.listProjects();
-      setProjects(list);
-      const target = list.find((p) => p.id === s.lastProjectId) ?? list[0];
-      if (target) {
-        const p = withSchema(await api.loadProject(target.id));
-        projectRef.current = p;
-        setProject(p);
-      }
+      await loadInitial(s.lastProjectId);
       setReady(true);
       refreshModels(); // yerel sunucular anahtarsız da çalışabilir
     })().catch((e) => {
       toast(`Başlatma hatası: ${e}`, "error");
       setReady(true);
     });
-  }, [refreshModels, toast]);
+  }, [refreshModels, toast, loadInitial]);
 
   // ---- Ayarları CSS değişkenlerine uygula ----
   useEffect(() => {
@@ -180,128 +155,10 @@ export default function App() {
     };
   }, [saver, settingsSaver]);
 
-  // ---- İşleme hattı ----
-  const cancelRun = useCallback(() => {
-    runRef.current?.cancel();
-    runRef.current = null;
-  }, []);
-
-  const runAi = useCallback(
-    async (text: string, customPrompt?: string) => {
-      const pid = projectRef.current?.id;
-      // Özel istem: temel sistem istemi korunur, kullanıcının istemi ek talimat olarak eklenir.
-      const s = customPrompt
-        ? { ...settingsRef.current, systemPrompt: buildCustomRunSystemPrompt(settingsRef.current.systemPrompt, customPrompt) }
-        : settingsRef.current;
-      if (!s.model) {
-        setProc({ ...IDLE, error: "Önce Ayarlar'dan bir model seçin." });
-        setShowSettings(true);
-        return;
-      }
-      let latest: Segment[] = [];
-      setProc({ running: true, phase: "ai", progress: { done: 0, total: 1 }, error: null, live: [] });
-      const run = processTranscript(
-        text,
-        s,
-        (segs) => {
-          latest = segs;
-          setProc((p) => ({ ...p, live: segs }));
-        },
-        (progress) => setProc((p) => ({ ...p, progress })),
-      );
-      runRef.current = run;
-      try {
-        const segs = await run.promise;
-        if (projectRef.current?.id !== pid) return;
-        mutate((p) => ({ ...p, segments: segs, insights: [] }));
-        setProc(IDLE);
-      } catch (e: any) {
-        if (projectRef.current?.id !== pid) return;
-        if (latest.length) mutate((p) => ({ ...p, segments: latest, insights: [] }));
-        const cancelled = e?.message === "İptal edildi";
-        setProc({ ...IDLE, error: cancelled ? "İşlem iptal edildi — kısmi sonuç tutuldu." : `AI hatası: ${e?.message ?? e}` });
-      } finally {
-        if (runRef.current === run) runRef.current = null;
-      }
-    },
-    [mutate],
-  );
-
-  // Tek adım: altyazıyı al (sıra: İngilizce > Türkçe > diğer) ve AI ile işle. Ek liste isteği yok.
-  const fetchAndProcess = useCallback(
-    async (url: string, manualTitle?: string) => {
-      const pid = projectRef.current?.id;
-      setSubPick(null);
-      setProc({ running: true, phase: "transcript", progress: null, error: null, live: null });
-      try {
-        const tr = await api.fetchDefaultTranscript(url);
-        if (projectRef.current?.id !== pid) return;
-        // Başlık: kullanıcı girdiyse o; yoksa altyazı çağrısının döndürdüğü başlık.
-        const title = manualTitle?.trim() || tr.title?.trim() || "";
-        mutate((p) => ({
-          ...p,
-          url,
-          transcriptRaw: tr.text,
-          title: title && NEW_TITLES.includes(p.title) ? title : p.title,
-        }));
-        refreshProjects();
-        toast(`Altyazı alındı (${tr.lang})`);
-        await runAi(tr.text);
-      } catch (e: any) {
-        if (projectRef.current?.id !== pid) return;
-        setProc({ ...IDLE, error: String(e?.message ?? e) });
-      }
-    },
-    [mutate, runAi, refreshProjects, toast],
-  );
-
-  // Adım 2: kullanıcının seçtiği altyazıyı indir ve AI ile işle.
-  const downloadSubtitle = useCallback(
-    async (url: string, videoTitle: string, opt: SubOption) => {
-      const pid = projectRef.current?.id;
-      setSubPick(null);
-      setProc({ running: true, phase: "transcript", progress: null, error: null, live: null });
-      try {
-        const tr = await api.fetchTranscript(url, opt.lang, opt.auto);
-        if (projectRef.current?.id !== pid) return;
-        mutate((p) => ({
-          ...p,
-          url,
-          title: NEW_TITLES.includes(p.title) ? videoTitle : p.title,
-          transcriptRaw: tr.text,
-        }));
-        refreshProjects();
-        toast(`Altyazı alındı (${tr.lang}${tr.auto ? ", otomatik" : ""})`);
-        await runAi(tr.text);
-      } catch (e: any) {
-        if (projectRef.current?.id !== pid) return;
-        setProc({ ...IDLE, error: String(e?.message ?? e) });
-      }
-    },
-    [mutate, runAi, refreshProjects, toast],
-  );
-
   // ---- Proje işlemleri ----
-  const openProject = useCallback(
-    async (id: string) => {
-      cancelRun();
-      setSubPick(null);
-      await saver.flush();
-      const p = withSchema(await api.loadProject(id));
-      projectRef.current = p;
-      setProject(p);
-      setProc(IDLE);
-      setTab("write");
-      patchSettings({ lastProjectId: id });
-    },
-    [cancelRun, saver, patchSettings],
-  );
-
   const newBlank = async () => {
     try {
-      const p = await api.createProject("Yeni proje", "");
-      await refreshProjects();
-      await openProject(p.id);
+      await createProject("Yeni proje", "");
     } catch (e) {
       toast(`Proje oluşturulamadı: ${e}`, "error");
     }
@@ -310,59 +167,44 @@ export default function App() {
   const newFromLink = async (url: string) => {
     setDialog(null);
     try {
-      const p = await api.createProject("Yükleniyor…", url);
-      await refreshProjects();
-      await openProject(p.id);
-      await fetchAndProcess(url);
+      const p = await createProject("Yükleniyor…", url);
+      await pipe.fetchForSource(p.sources[0].id, url);
     } catch (e) {
       toast(`${e}`, "error");
     }
   };
 
-  const renameCurrent = async (title: string) => {
+  const renameCurrent = (title: string) => {
     setDialog(null);
-    mutate((p) => ({ ...p, title }));
-    setTimeout(refreshProjects, 800);
+    rename(title);
   };
 
-  const deleteCurrent = async () => {
+  const deleteProject = async () => {
     setDialog(null);
-    const id = projectRef.current?.id;
-    if (!id) return;
-    cancelRun();
-    saver.cancel();
-    await api.deleteProject(id);
-    const list = await api.listProjects();
-    setProjects(list);
-    if (list[0]) await openProject(list[0].id);
-    else {
-      projectRef.current = null;
-      setProject(null);
-      setProc(IDLE);
+    try {
+      await deleteCurrent();
+    } catch (e) {
+      toast(`Silinemedi: ${e}`, "error");
     }
   };
 
-  const clearAll = async () => {
+  const clearEverything = async () => {
     setDialog(null);
-    cancelRun();
-    saver.cancel();
     try {
-      await api.clearAll();
-      projectRef.current = null;
-      setProject(null);
-      setProjects([]);
-      setProc(IDLE);
-      patchSettings({ lastProjectId: "" });
+      await clearAll();
       toast("Tüm projeler temizlendi");
     } catch (e) {
       toast(`Temizlenemedi: ${e}`, "error");
     }
   };
 
-  // Proje listesi başlığı, kayıttan sonra güncel kalsın
-  useEffect(() => {
-    if (status.s === "saved") refreshProjects();
-  }, [status.s, refreshProjects]);
+  const confirmRemoveSource = () => {
+    const id = dialog?.kind === "removeSource" ? dialog.id : null;
+    setDialog(null);
+    if (!id) return;
+    pipe.abortSource(id);
+    mutate((p) => removeSource(p, id));
+  };
 
   // ---- Kopyala (aktif sekmeye göre) ----
   const copy = useCallback(
@@ -380,7 +222,7 @@ export default function App() {
         toast(`Kopyalanamadı: ${e}`, "error");
       }
     },
-    [toast, tab],
+    [toast, tab, projectRef],
   );
 
   // ---- Kısayollar ----
@@ -402,44 +244,20 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [copy]);
 
-  // ---- Bölme çubuğu ----
-  const splitRef = useRef<HTMLDivElement>(null);
+  // ---- Etkin kaynak ve bölme çubuğu ----
+  const source = project ? activeSource(project) : null;
   const videoMarks = useMemo(
-    () => [...new Set((project?.segments ?? []).flatMap((s) => (s.marks ?? []).map((m) => m.t)))].sort((a, b) => a - b),
-    [project?.segments],
+    () => [...new Set((source?.segments ?? []).flatMap((s) => (s.marks ?? []).map((m) => m.t)))].sort((a, b) => a - b),
+    [source?.segments],
   );
-  const hasVideoPane = !!project && !!videoIdOf(project.url);
-  const L = Math.min(0.6, Math.max(0.2, settings.splitLeft ?? 0.36));
-  const M = Math.min(0.45, Math.max(0.18, settings.splitMid ?? 0.26));
-  // which: sol bölme çubuğu ("left") ya da sağ bölme çubuğu ("right"); video yoksa tek çubuk vardır.
-  const startDrag = (which: "left" | "right") => (e: React.PointerEvent) => {
-    e.preventDefault();
-    const box = splitRef.current!.getBoundingClientRect();
-    splitRef.current!.classList.add("dragging");
-    const move = (ev: PointerEvent) => {
-      const x = (ev.clientX - box.left) / box.width;
-      if (!hasVideoPane) return patchSettings({ splitRatio: Math.min(0.75, Math.max(0.25, x)) });
-      const MIN_L = 0.2, MIN_M = 0.18, MIN_R = 0.22;
-      if (which === "left") {
-        // sol/orta sınırı: sağ panelin genişliği sabit kalır
-        const edge = L + M;
-        const left = Math.min(Math.max(x, MIN_L), edge - MIN_M);
-        patchSettings({ splitLeft: left, splitMid: edge - left });
-      } else {
-        const mid = Math.min(Math.max(x - L, MIN_M), 1 - L - MIN_R);
-        patchSettings({ splitMid: mid });
-      }
-    };
-    const up = () => {
-      splitRef.current?.classList.remove("dragging");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const hasVideoPane = !!source && !!videoIdOf(source.url);
+  const { splitRef, L, M, startDrag } = useSplitLayout(settings, patchSettings, hasVideoPane);
 
-  const onInsights = useCallback((insights: Insight[]) => mutate((p) => ({ ...p, insights })), [mutate]);
+  const onInsights = useCallback(
+    (sourceId: string, insights: Insight[]) => mutate((p) => patchSource(p, sourceId, (s) => ({ ...s, insights }))),
+    [mutate],
+  );
+  const onSelectSource = useCallback((id: string) => mutate((p) => (p.activeSourceId === id ? p : { ...p, activeSourceId: id })), [mutate]);
   const onDoc = useCallback((doc: any) => mutate((p) => ({ ...p, editorDoc: doc }), false), [mutate]);
   const onTimed = useCallback((doc: TimedDoc) => mutate((p) => ({ ...p, timed: doc })), [mutate]);
   // Arka planda gelen sonuçlar (AI önerileri) en güncel zamanlı metne uygulanır.
@@ -471,6 +289,9 @@ export default function App() {
 
   if (!ready) return <div className="boot">Yükleniyor…</div>;
 
+  const removing =
+    dialog?.kind === "removeSource" && project ? project.sources.findIndex((s) => s.id === dialog.id) : -1;
+
   return (
     <div className="app">
       <TopBar
@@ -486,19 +307,25 @@ export default function App() {
         onSettings={() => setShowSettings(true)}
       />
 
-      {project ? (
+      {project && source ? (
         <main className="split" ref={splitRef}>
           <div className="split-left" style={{ width: `${(hasVideoPane ? L : settings.splitRatio) * 100}%` }}>
             <LeftPane
               project={project}
               settings={settings}
               models={models}
-              proc={proc}
+              proc={pipe.proc}
               onInsights={onInsights}
-              onReprocess={() => runAi(project.transcriptRaw)}
-              onCustomRun={(prompt) => runAi(project.transcriptRaw || segmentsToMarkdown(project.segments), prompt)}
-              onCancel={cancelRun}
-              onFetchUrl={(url, title) => fetchAndProcess(url, title)}
+              onReprocess={pipe.reprocess}
+              onCustomRun={pipe.customRun}
+              onCancel={pipe.cancel}
+              onResume={pipe.resume}
+              onFetchUrl={pipe.fetchActive}
+              onSelectSource={onSelectSource}
+              onAddSource={pipe.addSourceFromUrl}
+              onRemoveSource={(id) => setDialog({ kind: "removeSource", id })}
+              onPickSubtitle={pipe.pickSubtitle}
+              onRestore={pipe.restoreVersion}
               onToast={toast}
             />
           </div>
@@ -507,10 +334,11 @@ export default function App() {
             <>
               <div className="split-mid" style={{ width: `${M * 100}%` }}>
                 <VideoPanel
-                  url={project.url}
-                  title={project.title}
+                  key={source.id}
+                  url={source.url}
+                  title={source.title.trim() || project.title}
                   marks={videoMarks}
-                  transcriptRaw={project.transcriptRaw}
+                  transcriptRaw={source.transcriptRaw}
                   onToast={toast}
                 />
               </div>
@@ -574,12 +402,12 @@ export default function App() {
           onClose={() => setShowSettings(false)}
         />
       )}
-      {subPick && (
+      {pipe.subPick && (
         <SubtitlePicker
-          title={subPick.list.title}
-          options={subPick.list.options}
-          onConfirm={(opt) => downloadSubtitle(subPick.url, subPick.list.title, opt)}
-          onCancel={() => setSubPick(null)}
+          title={pipe.subPick.list.title}
+          options={pipe.subPick.list.options}
+          onConfirm={pipe.downloadSubtitle}
+          onCancel={() => pipe.setSubPick(null)}
         />
       )}
       {dialog?.kind === "link" && (
@@ -589,10 +417,20 @@ export default function App() {
         <TextDialog title="Projeyi yeniden adlandır" initial={project.title} confirmLabel="Kaydet" onSubmit={renameCurrent} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === "delete" && project && (
-        <ConfirmDialog title="Projeyi sil" message={`“${project.title}” ve resimleri kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteCurrent} onCancel={() => setDialog(null)} />
+        <ConfirmDialog title="Projeyi sil" message={`“${project.title}” ve resimleri kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === "clear" && (
-        <ConfirmDialog title="Tümünü temizle" message="Tüm projeler, scriptler ve kaydedilmiş resimler kalıcı olarak silinecek. Bu işlem geri alınamaz." confirmLabel="Hepsini sil" danger onConfirm={clearAll} onCancel={() => setDialog(null)} />
+        <ConfirmDialog title="Tümünü temizle" message="Tüm projeler, scriptler ve kaydedilmiş resimler kalıcı olarak silinecek. Bu işlem geri alınamaz." confirmLabel="Hepsini sil" danger onConfirm={clearEverything} onCancel={() => setDialog(null)} />
+      )}
+      {removing >= 0 && project && (
+        <ConfirmDialog
+          title="Kaynağı sil"
+          message={`“${sourceLabel(project.sources[removing], removing)}” kaynağının altyazısı, bölümleri ve açıklamaları silinecek. Senaryonuz etkilenmez.`}
+          confirmLabel="Sil"
+          danger
+          onConfirm={confirmRemoveSource}
+          onCancel={() => setDialog(null)}
+        />
       )}
 
       <div className="toasts">

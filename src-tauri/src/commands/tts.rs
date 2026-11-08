@@ -37,8 +37,8 @@ pub async fn tts(text: String) -> Result<Speech, String> {
     if text.is_empty() {
         return Err("Boş metin".into());
     }
-    let client = reqwest::Client::new();
-    let lang = detect_lang(&client, &text).await;
+    let client = crate::http::client();
+    let lang = detect_lang(client, &text).await;
     let resp = client
         .get("https://translate.google.com/translate_tts")
         .query(&[("ie", "UTF-8"), ("client", "tw-ob"), ("tl", lang.as_str()), ("q", text.as_str())])

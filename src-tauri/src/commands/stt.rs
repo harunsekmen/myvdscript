@@ -55,7 +55,7 @@ pub async fn transcribe_media(path: String, language: String) -> Result<Value, S
         form = form.text("language", lang.to_string());
     }
 
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .post(ENDPOINT)
         .bearer_auth(key)
         .multipart(form)

@@ -1,6 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { api } from "../lib/api";
+import { DEFAULT_SILENCE_SEC, acceptedRanges, buildCuts, cutWordIds } from "../lib/cutList";
+import { baseName, buildCues, toSrt, toVtt } from "../lib/subtitleExport";
 import { fmtTime, moveItem, newId, setWordText, splitLines } from "../lib/timed";
 import type { TimedDoc, TimedItem } from "../lib/types";
+import { CutListPanel } from "./CutListPanel";
 
 interface Props {
   doc: TimedDoc;
@@ -48,6 +53,39 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
   const imageTarget = useRef<string | null>(null);
 
   const lines = useMemo(() => splitLines(doc.items), [doc.items]);
+
+  // ---- Kesim listesi ve dışa aktarma ----
+  const [showCuts, setShowCuts] = useState(false);
+  const [expOpen, setExpOpen] = useState(false);
+  const expRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => !expRef.current?.contains(e.target as Node) && setExpOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  const silenceSec = doc.cuts?.silenceSec ?? DEFAULT_SILENCE_SEC;
+  const cuts = useMemo(() => (showCuts ? buildCuts(doc.items, silenceSec) : []), [showCuts, doc.items, silenceSec]);
+  const cutIds = useMemo(
+    () => (showCuts ? cutWordIds(doc.items, acceptedRanges(cuts, doc.cuts)) : new Set<string>()),
+    [showCuts, cuts, doc.items, doc.cuts],
+  );
+
+  const exportSubs = async (kind: "srt" | "vtt") => {
+    setExpOpen(false);
+    const cues = buildCues(doc.items);
+    if (!cues.length) {
+      onToast("Dışa aktarılacak kelime yok", "error");
+      return;
+    }
+    try {
+      const path = await save({ defaultPath: `${baseName(doc.source)}.${kind}`, filters: [{ name: kind === "srt" ? "SubRip altyazı" : "WebVTT altyazı", extensions: [kind] }] });
+      if (!path) return;
+      await api.saveTextFile(path, kind === "srt" ? toSrt(cues) : toVtt(cues));
+      onToast(`${cues.length} altyazı kaydedildi`);
+    } catch (e) {
+      onToast(`Kaydedilemedi: ${e}`, "error");
+    }
+  };
   const sugs = doc.suggestions ?? {};
   const wordById = useMemo(() => {
     const m = new Map<string, WordItem>();
@@ -345,7 +383,7 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
           <span key={item.id} className="tw-wrap">
             <span
               id={"w-" + item.id}
-              className={"tw" + (sug !== undefined ? " sug" : "") + (isSel ? " sel" : "") + (isDrop ? " drop" : "")}
+              className={"tw" + (sug !== undefined ? " sug" : "") + (cutIds.has(item.id) ? " cut" : "") + (isSel ? " sel" : "") + (isDrop ? " drop" : "")}
               data-anchor={item.id}
               data-time={fmtTime(item.s, 1)}
               onClick={() => selectWord(item.id)}
@@ -415,6 +453,24 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
 
   return (
     <div className="timed-wrap">
+    {doc.items.length > 0 && (
+      <div className="timed-bar">
+        <button className={"btn small" + (showCuts ? " primary" : "")} onClick={() => setShowCuts(!showCuts)} title="Sessizlik, dolgu sesi ve tekrarları bulup kesim listesi çıkar">
+          ✂ Kesim listesi
+        </button>
+        <span className="spacer" />
+        <div className="copy-btn" ref={expRef}>
+          <button className="btn small" onClick={() => setExpOpen(!expOpen)}>Dışa aktar ▾</button>
+          {expOpen && (
+            <div className="menu right">
+              <button onClick={() => exportSubs("srt")}>Altyazı (.srt) <span className="muted">DaVinci, Premiere, CapCut</span></button>
+              <button onClick={() => exportSubs("vtt")}>Altyazı (.vtt) <span className="muted">WebVTT</span></button>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    {showCuts && <CutListPanel doc={doc} cuts={cuts} onDoc={onDoc} onJump={focusWord} onToast={onToast} />}
     <div className="timed" tabIndex={0} onPaste={onPaste} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onScroll={() => {
       if (sel) measure(sel);
       if (noteOpen) closeNote();

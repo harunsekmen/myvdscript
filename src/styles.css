@@ -460,3 +460,44 @@ mark.hl:hover { background: #f2b44d55; }
 .tiptap-editor pre code { background: none; padding: 0; }
 .tiptap-editor hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
 .tiptap-editor a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+/* ---- Zamanlı metin: dışa aktarma çubuğu ve kesim listesi ---- */
+.timed-bar { display: flex; align-items: center; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--line); }
+.timed-bar .copy-btn { position: relative; }
+.tw.cut { text-decoration: line-through; text-decoration-color: #ef7a8c; color: #8a8fa6; opacity: .65; }
+.cut-panel { display: flex; flex-direction: column; background: #181b24; border-bottom: 1px solid var(--line); padding: 8px 16px; gap: 6px; }
+.cut-head, .cut-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cut-title { font-weight: 600; font-size: 13px; color: #f3c9a0; }
+.cut-saved { font-size: 12px; color: #b8f0d4; font-variant-numeric: tabular-nums; }
+.cut-field { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.cut-num { width: 64px; padding: 2px 6px; font-size: 12px; }
+.cut-fps { padding: 2px 4px; font-size: 12px; width: auto; }
+.cut-list { max-height: 190px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.cut-empty { padding: 6px 8px; font-size: 13px; }
+.cut-row { display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
+.cut-row:hover { background: #ffffff0a; }
+.cut-row.off { opacity: .5; }
+.cut-type { flex: none; min-width: 74px; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 5px; text-align: center; background: var(--bg-3); color: var(--muted); }
+.cut-type.silence { color: #9ec1ff; }
+.cut-type.filler { color: #f3b3be; }
+.cut-type.maybe { color: #e6d28c; }
+.cut-type.retake { color: #f3c9a0; }
+.cut-type.repeat { color: #c9b3f3; }
+.cut-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cut-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cut-len { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ===== Çoklu kaynak sekmeleri (LeftPane) ===== */
+.source-tabs { display: flex; align-items: stretch; gap: 2px; padding: 4px 12px 0; border-bottom: 1px solid var(--line); background: var(--bg); overflow-x: auto; scrollbar-width: thin; }
+.source-tab { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 200px; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; color: var(--muted); }
+.source-tab:hover { background: var(--bg-2); color: var(--text); }
+.source-tab.on { background: var(--bg-3); border-color: var(--line); color: var(--text); }
+.source-tab.busy .source-tab-btn::before { content: "●"; color: var(--accent); margin-right: 5px; font-size: 9px; }
+.source-tab-btn { background: none; border: none; color: inherit; font: inherit; font-size: 12.5px; padding: 6px 4px 6px 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.source-tab-x { background: none; border: none; color: var(--muted); font-size: 14px; line-height: 1; padding: 4px 7px 4px 2px; cursor: pointer; border-radius: 4px; }
+.source-tab-x:hover { color: var(--danger); }
+.source-add { flex: none; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+.source-add:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
+.source-add-form { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+.menu-label { font-size: 11px; padding: 4px 10px 2px; }
+.banner-actions { display: flex; gap: 8px; flex: none; }

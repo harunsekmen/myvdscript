@@ -1,11 +1,16 @@
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::settings::api_key;
+
+/// Akış sırasında bu süre boyunca hiç veri gelmezse istek başarısız sayılır.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Akış desteklemeyen sunucudan tek parça yanıt için üst sınır.
+const NON_STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
 pub struct AiState(Mutex<HashMap<String, JoinHandle<()>>>);
@@ -29,7 +34,7 @@ fn with_auth(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
 
 #[tauri::command]
 pub async fn list_models(base_url: String) -> Result<Vec<String>, String> {
-    let resp = with_auth(reqwest::Client::new().get(endpoint(&base_url, "models")))
+    let resp = with_auth(crate::http::client().get(endpoint(&base_url, "models")))
         .timeout(std::time::Duration::from_secs(20))
         .send()
         .await
@@ -99,11 +104,16 @@ async fn run_stream(
             { "role": "user", "content": user },
         ],
     });
-    let resp = with_auth(reqwest::Client::new().post(endpoint(base_url, "chat/completions")))
+    let resp = with_auth(crate::http::client().post(endpoint(base_url, "chat/completions")))
         .json(&body)
-        .send()
+        .send();
+    // Başlıklar gelene kadar da sonsuza dek beklenmez.
+    let resp = tokio::time::timeout(NON_STREAM_TIMEOUT, resp)
         .await
-        .map_err(|e| format!("Bağlanılamadı: {e}"))?;
+        .map_err(|_| format!("Sunucu yanıt vermiyor ({} sn içinde yanıt gelmedi)", NON_STREAM_TIMEOUT.as_secs()))?
+        .map_err(|e| {
+            if e.is_timeout() { "Sunucuya bağlanılamadı (zaman aşımı)".to_string() } else { format!("Bağlanılamadı: {e}") }
+        })?;
     let status = resp.status();
     if !status.is_success() {
         let t = resp.text().await.unwrap_or_default();
@@ -126,14 +136,21 @@ async fn run_stream(
 
     if !is_sse {
         // Akış desteklemeyen sunucu: tek parça yanıt.
-        let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let v: Value = tokio::time::timeout(NON_STREAM_TIMEOUT, resp.json())
+            .await
+            .map_err(|_| format!("Sunucu yanıt vermiyor ({} sn içinde yanıt gelmedi)", NON_STREAM_TIMEOUT.as_secs()))?
+            .map_err(|e| e.to_string())?;
         emit(v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string());
         return Ok(());
     }
 
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = vec![];
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let next = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next())
+            .await
+            .map_err(|_| format!("Sunucu yanıt vermiyor ({} sn veri gelmedi)", STREAM_IDLE_TIMEOUT.as_secs()))?;
+        let Some(chunk) = next else { break };
         buf.extend_from_slice(&chunk.map_err(|e| format!("Akış kesildi: {e}"))?);
         while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=pos).collect();
