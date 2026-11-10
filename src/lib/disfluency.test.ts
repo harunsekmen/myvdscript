@@ -26,6 +26,32 @@ describe("gereksiz kelimeler", () => {
     expect([...m.keys()]).toEqual(["w2"]);
   });
 
+  it("AI bir cümlenin tüm tekrarlarını işaretlese de en son söylenen hali kalır", () => {
+    const sent = "TypeScript'te olan iki şeyi size hızlıca göstermek istiyorum".split(" ");
+    const words = [...sent, ...sent, "Böylece", "bu"];
+    const all: Record<string, "retake"> = {};
+    for (let i = 1; i <= sent.length * 2; i++) all[`w${i}`] = "retake";
+    const m = disfluentWords(doc(words, { disfluent: all }));
+    for (let i = 1; i <= sent.length; i++) expect(m.get(`w${i}`)).toBe("retake");
+    for (let i = sent.length + 1; i <= sent.length * 2; i++) expect(m.has(`w${i}`)).toBe(false);
+  });
+
+  it("son hali zaten işaretsizse ve yarım kalan deneme tekse dokunulmaz", () => {
+    const words = ["bugün", "size", "bugün", "size", "iki", "şey", "anlatacağım"];
+    const m = disfluentWords(doc(words, { disfluent: { w1: "retake", w2: "retake" } }));
+    expect(m.get("w1")).toBe("retake");
+    expect(m.get("w2")).toBe("retake");
+    expect(m.has("w3")).toBe(false);
+    const solo = disfluentWords(doc(["aslında", "şöyle", "bir", "konu", "anlatayım"], { disfluent: { w1: "retake", w2: "retake" } }));
+    expect(solo.has("w1") && solo.has("w2")).toBe(true);
+  });
+
+  it("art arda tekrarın ikisi de işaretlenmişse sonuncusu kalır", () => {
+    const m = disfluentWords(doc(["çok", "çok", "güzel"], { disfluent: { w1: "repeat", w2: "repeat" } }));
+    expect(m.get("w1")).toBe("repeat");
+    expect(m.has("w2")).toBe(false);
+  });
+
   it("elle işaretleme ve kaldırma", () => {
     let d = doc(["ıı", "harika"]);
     d = toggleDisfluent(d, "w2", true);

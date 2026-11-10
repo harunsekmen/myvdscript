@@ -157,7 +157,7 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
     if (!noteOpen) return;
     const down = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (!t.closest(".npop") && !t.closest(".tn-badge")) closeNote();
+      if (!t.closest(".npop") && !t.closest(".tn-badge, .tn-inline")) closeNote();
     };
     const key = (e: KeyboardEvent) => e.key === "Escape" && closeNote();
     document.addEventListener("mousedown", down);
@@ -431,20 +431,34 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
             onDragStart={onDragStartItem(item.id)}
             onDragEnd={onDragEnd}
           >
-            <button
-              id={"n-" + item.id}
-              className={"tn-badge" + (noteOpen === item.id ? " on" : "") + (item.approx ? " approx" : "")}
-              title={
-                (item.approx
-                  ? "Konumu yaklaşık (senaryodan): doğru kelimeye sürükleyip bırakınca onaylanır.\n"
-                  : item.from === "script"
-                    ? "Senaryodaki AI notu, ilgili yere otomatik yerleştirildi.\n"
-                    : "") + (item.text ? item.text : "Not (boş)")
-              }
-              onClick={() => openNote(item.id)}
-            >
-              <NoteIcon />
-            </button>
+            {item.text.trim() ? (
+              <span
+                id={"n-" + item.id}
+                role="button"
+                tabIndex={0}
+                className={"tn-inline script-note" + (noteOpen === item.id ? " on" : "") + (item.approx ? " approx" : "")}
+                title={
+                  (item.approx
+                    ? "AI notu · konumu yaklaşık (senaryodan): doğru kelimeye sürükleyip bırakınca onaylanır."
+                    : item.from === "script"
+                      ? "Senaryodaki AI notu, ilgili yere otomatik yerleştirildi."
+                      : "AI notu") + " Tıkla: düzenle."
+                }
+                onClick={() => openNote(item.id)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openNote(item.id))}
+              >
+                {item.text}
+              </span>
+            ) : (
+              <button
+                id={"n-" + item.id}
+                className={"tn-badge" + (noteOpen === item.id ? " on" : "") + (item.approx ? " approx" : "")}
+                title="Not (boş) · tıkla: düzenle"
+                onClick={() => openNote(item.id)}
+              >
+                <NoteIcon />
+              </button>
+            )}
           </span>
         );
       case "img":

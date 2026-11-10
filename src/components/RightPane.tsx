@@ -44,7 +44,7 @@ const looksLikeMarkdown = (t: string) =>
   /^(#{1,6}\s+\S|\s*[-*+]\s+\S|\s*\d+[.)]\s+\S|>\s?\S|```)/m.test(t) || /\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\n]+\)/.test(t);
 
 const UNDO_WINDOW_MS = 30_000;
-const MEDIA_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "webm", "ogg", "flac", "mpeg", "mpga"];
+const MEDIA_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "opus", "wma", "mpeg", "mpga", "mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "ts"];
 
 export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -386,7 +386,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
             disabled={!!checking || !!busy || !!placing}
             title="Senaryodaki resimleri ve AI notlarını, söylendikleri yere göre zamanlı metne yeniden yerleştir (senaryodan gelenlerin konumu sıfırlanır; zamanlı metne elle eklediklerin kalır)"
           >
-            🖼 Resim ve notları yerleştir
+            🖼 Yerleştir
           </button>
         )}
         {timedTab && (
@@ -396,7 +396,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
             disabled={!!checking || !!busy}
             title="Zamanlı metni AI'a gönder; yanlış kelimeler için öneri al, dolgu ve tekrarları işaretle"
           >
-            ✦ AI ile kontrol et
+            ✦ AI kontrol
           </button>
         )}
         <button

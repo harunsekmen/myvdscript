@@ -1,4 +1,4 @@
-import { type Cut, type CutType, cutWords, detectFillers, detectRepeats, detectRetakes } from "./cutList";
+import { type Cut, type CutType, type CutWord, cutWords, detectFillers, detectRepeats, detectRetakes } from "./cutList";
 import type { DisfluencyKind, TimedDoc, TimedItem } from "./types";
 
 export const DISFLUENCY_LABEL: Record<DisfluencyKind, string> = {
@@ -23,8 +23,51 @@ export function disfluentWords(doc: TimedDoc | null | undefined): Map<string, Di
   if (!doc) return new Map();
   const out = localDisfluent(doc.items);
   for (const [id, k] of Object.entries(doc.disfluent ?? {})) out.set(id, k);
+  keepFinalTakes(cutWords(doc.items), out);
   for (const id of doc.keepWords ?? []) out.delete(id);
   return out;
+}
+
+const TAKE_KINDS = new Set<DisfluencyKind>(["retake", "repeat"]);
+
+/** `b`'nin başı `a`'nın başını tekrar ediyor mu (aynı ilk kelime + ilk ~8 kelimede yüksek benzerlik)? */
+function restarts(a: CutWord[], b: CutWord[]): boolean {
+  if (!a.length || !b.length || !a[0].n || a[0].n !== b[0].n) return false;
+  const L = Math.min(8, a.length, b.length);
+  let same = 0;
+  for (let k = 0; k < L; k++) if (a[k].n === b[k].n) same++;
+  if (L === 1) return a.length === 1;
+  return same / L >= 0.6;
+}
+
+/**
+ * Güvenlik kuralı: bir cümle birkaç kez söylendiğinde EN SON söylenen hali korunur.
+ * Ardışık tekrar/yeniden çekim işaretli kelime öbeğinin arkasından aynı başlangıç gelmiyorsa
+ * (yani son deneme de işaretlenmişse), öbek içindeki son yeniden başlangıçtan itibaren işaret kaldırılır.
+ */
+export function keepFinalTakes(words: CutWord[], marks: Map<string, DisfluencyKind>): void {
+  let i = 0;
+  while (i < words.length) {
+    const k = marks.get(words[i].id);
+    if (!k || !TAKE_KINDS.has(k)) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < words.length && TAKE_KINDS.has(marks.get(words[j].id) as DisfluencyKind)) j++;
+    const run = words.slice(i, j);
+    // Arkasından gelen (işaretsiz) metin aynı cümleyle başlıyorsa son hali zaten korunuyor.
+    const after = words.slice(j, j + 8).filter((w) => !marks.has(w.id));
+    if (!restarts(run, after)) {
+      for (let p = run.length - 1; p > 0; p--) {
+        if (restarts(run.slice(0, p), run.slice(p))) {
+          run.slice(p).forEach((w) => marks.delete(w.id));
+          break;
+        }
+      }
+    }
+    i = j;
+  }
 }
 
 /** Bir kelimeyi elle gereksiz işaretler ya da işareti kaldırır. */
@@ -32,7 +75,7 @@ export function toggleDisfluent(doc: TimedDoc, id: string, mark: boolean): Timed
   const dis = { ...(doc.disfluent ?? {}) };
   const keep = (doc.keepWords ?? []).filter((x) => x !== id);
   if (mark) {
-    if (!localDisfluent(doc.items).has(id) && !dis[id]) dis[id] = "manual";
+    if (!disfluentWords({ ...doc, disfluent: dis, keepWords: keep }).has(id)) dis[id] = "manual";
   } else {
     delete dis[id];
     if (localDisfluent(doc.items).has(id)) keep.push(id);
