@@ -4,7 +4,7 @@ import { api, streamChat } from "../lib/api";
 import { buildChapterMessage, CHAPTER_PROMPT, parseChapterTitles, sameTitles } from "../lib/chapters";
 import { translatedSentenceAt } from "../lib/segmentParser";
 import type { Segment, Settings } from "../lib/types";
-import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
+import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
 
 interface Meta {
@@ -24,6 +24,44 @@ function Icon({ d, w = 2, fill = false }: { d: string; w?: number; fill?: boolea
   );
 }
 
+/** Ses düğmesi: tıklayınca sessiz/sesli; üstüne gelince yanında ses çubuğu açılır. */
+function VolumeControl({ volume, muted, disabled }: { volume: number; muted: boolean; disabled?: boolean }) {
+  const v = muted ? 0 : volume;
+  const icon =
+    v === 0
+      ? "M11 5 6 9H2v6h4l5 4V5ZM22 9l-6 6M16 9l6 6"
+      : v < 50
+        ? "M11 5 6 9H2v6h4l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7"
+        : "M11 5 6 9H2v6h4l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14";
+  return (
+    <div className={"vp-vol" + (disabled ? " off" : "")}>
+      <button
+        className="vp-btn"
+        onClick={toggleMute}
+        disabled={disabled}
+        title={v === 0 ? "Sesi aç" : "Sesi kapat"}
+        aria-label={v === 0 ? "Sesi aç" : "Sesi kapat"}
+      >
+        <Icon d={icon} />
+      </button>
+      <input
+        type="range"
+        className="vp-vol-range"
+        aria-label="Ses seviyesi"
+        title={`Ses: ${v}%`}
+        min={0}
+        max={100}
+        step={1}
+        value={v}
+        disabled={disabled}
+        style={{ "--p": `${v}%` } as React.CSSProperties}
+        onChange={(e) => setVolume(Number(e.target.value))}
+      />
+    </div>
+  );
+}
+
+const SEEK_STEP = 5;
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const CUE_KEY = "sa.cueLang";
 
@@ -80,6 +118,8 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const [chTrBusy, setChTrBusy] = useState(false);
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
   const cues = useMemo(() => parseCues(transcriptRaw), [transcriptRaw]);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const hoverRef = useRef(false);
 
   useEffect(() => {
     const f = frameRef.current;
@@ -169,6 +209,27 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
     };
   }, [fs]);
 
+  const shotOpen = shot != null;
+  // Sol/sağ ok: video üzerindeyken, videoya tıklanmışken veya tam ekrandayken 5 sn geri/ileri sarar.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || shotOpen) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.classList.contains("vp-vol-range")) return;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) && !t.closest(".vf-bar")) return;
+      const focused = document.activeElement === overlayRef.current;
+      if (!fs && !focused && !hoverRef.current) return;
+      const s = getVideoState();
+      if (!s.ready || s.videoId !== id) return;
+      e.preventDefault();
+      const d = e.key === "ArrowLeft" ? -SEEK_STEP : SEEK_STEP;
+      seekTo(Math.min(s.duration || Infinity, Math.max(0, s.time + d)));
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [fs, id, shotOpen]);
+
   if (!id) return null;
   const ready = vs.ready && vs.videoId === id;
   const time = ready ? vs.time : 0;
@@ -209,11 +270,13 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   };
 
   const playing = ready && vs.playing;
-  const cue = !playing
+  // Çalan satır; tam ekranda video duraklayınca da ekranda kalır (alttaki kutu yalnız çalarken gösterir).
+  const liveCue = !ready || (!playing && time <= 0)
     ? ""
     : showTr
       ? translatedSentenceAt(segments, time + 0.3)
       : (cues.filter((c) => c.t <= time + 0.5).pop()?.text ?? "");
+  const cue = playing ? liveCue : "";
   const origTag = (origLang.split("-")[0] || "EN").toUpperCase().slice(0, 3);
   const origin = encodeURIComponent(window.location.origin);
   const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&playsinline=1&origin=${origin}`;
@@ -236,9 +299,22 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
             referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
           />
+          {/* Tıklamaları yakalar: iframe odak almaz, böylece ok tuşlarıyla ileri/geri sarma çalışır. */}
+          <div
+            ref={overlayRef}
+            className="vf-click"
+            tabIndex={-1}
+            onMouseEnter={() => (hoverRef.current = true)}
+            onMouseLeave={() => (hoverRef.current = false)}
+            onClick={() => {
+              overlayRef.current?.focus({ preventScroll: true });
+              if (ready) toggle();
+            }}
+            onDoubleClick={() => ready && setFs(!fs)}
+          />
           {fs && (
             <>
-              {cue && <div className="vf-cue">{cue}</div>}
+              {liveCue && <div className="vf-cue">{liveCue}</div>}
               <div className="vf-bar">
                 <button className="vp-btn main" onClick={toggle} disabled={!ready} title={vs.playing ? "Duraklat" : "Oynat"} aria-label={vs.playing ? "Duraklat" : "Oynat"}>
                   {vs.playing ? <Icon d="M7 4v16M17 4v16" w={3} /> : <Icon d="M7 4.5v15l13-7.5-13-7.5Z" fill />}
@@ -256,6 +332,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
                   onChange={(e) => seekTo(Number(e.target.value))}
                 />
                 <span className="vp-time">{clock(vs.duration)}</span>
+                <VolumeControl volume={vs.volume} muted={vs.muted} disabled={!ready} />
                 <button className="vf-lang" onClick={toggleCueLang} disabled={!hasTr} title="Altyazı dili">{showTr ? "TR" : origTag}</button>
                 <button className="vp-btn" onClick={() => setFs(false)} title="Tam ekrandan çık (Esc)" aria-label="Tam ekrandan çık">
                   <Icon d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
@@ -312,6 +389,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
               <Icon d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             </button>
             <span className="vp-sep" />
+            <VolumeControl volume={vs.volume} muted={vs.muted} disabled={!ready} />
             <div className="vp-rate" ref={rateRef}>
               <button
                 className={"vp-rate-btn" + (rate !== 1 ? " on" : "") + (rateOpen ? " open" : "")}

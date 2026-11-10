@@ -23,9 +23,19 @@ export interface VideoState {
   time: number;
   duration: number;
   error: string | null;
+  /** Ses seviyesi (0–100) ve sessiz durumu; oturumlar arası saklanır. */
+  volume: number;
+  muted: boolean;
 }
 
-const IDLE: VideoState = { videoId: null, ready: false, playing: false, time: 0, duration: 0, error: null };
+const VOL_KEY = "sa.volume";
+const MUTE_KEY = "sa.muted";
+const savedVol = () => {
+  const v = Number(localStorage.getItem(VOL_KEY));
+  return localStorage.getItem(VOL_KEY) != null && Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+};
+
+const IDLE: VideoState = { videoId: null, ready: false, playing: false, time: 0, duration: 0, error: null, volume: 100, muted: false };
 
 let st: VideoState = IDLE;
 const listeners = new Set<() => void>();
@@ -66,6 +76,7 @@ function onMessage(e: MessageEvent) {
   }
   if (!st.ready) {
     set({ ready: true });
+    applyVolume();
     if (pending) {
       load(pending.from, pending.to);
       pending = null;
@@ -93,7 +104,7 @@ export function attachFrame(f: HTMLIFrameElement, videoId: string): () => void {
   frame = f;
   pending = null;
   stopAt = null;
-  set({ ...IDLE, videoId });
+  set({ ...IDLE, videoId, volume: savedVol(), muted: localStorage.getItem(MUTE_KEY) === "1" });
   if (!listening) {
     window.addEventListener("message", onMessage);
     listening = true;
@@ -106,7 +117,7 @@ export function attachFrame(f: HTMLIFrameElement, videoId: string): () => void {
     f.removeEventListener("load", handshake);
     if (frame === f) {
       frame = null;
-      set({ ...IDLE });
+      set({ ...IDLE, volume: st.volume, muted: st.muted });
     }
   };
 }
@@ -132,4 +143,33 @@ export function seekTo(t: number) {
   stopAt = null;
   command("seekTo", [Math.max(0, t), true]);
   set({ time: Math.max(0, t) });
+}
+
+function applyVolume() {
+  command("setVolume", [st.volume]);
+  command(st.muted ? "mute" : "unMute");
+}
+
+/** Ses seviyesini (0–100) ayarlar; 0'dan büyükse sessizi kaldırır. */
+export function setVolume(v: number) {
+  const volume = Math.round(Math.min(100, Math.max(0, v)));
+  const muted = volume === 0;
+  localStorage.setItem(VOL_KEY, String(volume));
+  localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
+  set({ volume, muted });
+  applyVolume();
+}
+
+/** Sesi kapatır/açar; ses 0'dayken açılırsa makul bir seviyeye döner. */
+export function toggleMute() {
+  if (st.muted || st.volume === 0) {
+    const volume = st.volume || 50;
+    localStorage.setItem(VOL_KEY, String(volume));
+    localStorage.setItem(MUTE_KEY, "0");
+    set({ volume, muted: false });
+  } else {
+    localStorage.setItem(MUTE_KEY, "1");
+    set({ muted: true });
+  }
+  applyVolume();
 }
