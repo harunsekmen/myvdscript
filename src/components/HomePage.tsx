@@ -12,7 +12,7 @@ import {
   timeAgo,
   type ProjectStats,
 } from "../lib/home";
-import type { HomeSort, ProjectMeta, Settings } from "../lib/types";
+import type { HomeSort, ProjectMeta, Settings, StageDef } from "../lib/types";
 import { StagePanel } from "./StagePanel";
 
 interface Props {
@@ -123,6 +123,138 @@ const STAGE_COLORS = ["#6c8cff", "#a78bfa", "#f5b84b", "#4fd1a5", "#f0883e", "#e
 
 /** Kullanıcının panoya eklediği yeni aşama (kalıcı; Ayarlar > Ana sayfa'dan düzenlenir/silinir). */
 const newStage = (label: string, i: number) => ({ id: crypto.randomUUID().slice(0, 8), label, color: STAGE_COLORS[i % STAGE_COLORS.length] });
+
+/**
+ * Sütun başlığı: sürüklenerek sıralanır; çift tıkla ya da ⋯ menüsünden yeniden adlandırılır,
+ * renk değiştirilir veya silinir (içindeki projeler ilk aşamaya düşer).
+ */
+function StageHeader({
+  stage,
+  count,
+  canDelete,
+  fallbackLabel,
+  onPatch,
+  onDelete,
+  onDragStart,
+  onDragEnd,
+}: {
+  stage: StageDef;
+  count: number;
+  canDelete: boolean;
+  fallbackLabel: string;
+  onPatch: (patch: Partial<StageDef>) => void;
+  onDelete: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setMenu(null);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", key);
+    };
+  }, [menu]);
+
+  const finish = (val: string, save: boolean) => {
+    setEditing(false);
+    const label = val.trim();
+    if (save && label && label !== stage.label) onPatch({ label });
+  };
+
+  return (
+    <header
+      className="kcol-head"
+      draggable={!editing}
+      title={editing ? undefined : "Sürükleyerek sırala · çift tıkla adını değiştir"}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDoubleClick={() => setEditing(true)}
+    >
+      <i />
+      {editing ? (
+        <input
+          className="kcol-rename"
+          autoFocus
+          defaultValue={stage.label}
+          maxLength={40}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => finish(e.currentTarget.value, true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") finish("", false);
+          }}
+        />
+      ) : (
+        <span className="ellipsis">{stage.label}</span>
+      )}
+      <b className="tnum">{count}</b>
+      <button
+        className="kcol-menu-btn"
+        title="Aşama seçenekleri"
+        aria-label="Aşama seçenekleri"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setConfirmDel(false);
+          setMenu(menu ? null : { x: Math.min(r.right - 200, window.innerWidth - 212), y: r.bottom + 6 });
+        }}
+      >
+        ⋯
+      </button>
+      {menu && (
+        <div className="menu kcol-menu" ref={menuRef} style={{ left: Math.max(8, menu.x), top: menu.y }}>
+          <button
+            onClick={() => {
+              setMenu(null);
+              setEditing(true);
+            }}
+          >
+            Yeniden adlandır
+          </button>
+          <div className="kcol-colors" role="group" aria-label="Renk">
+            {STAGE_COLORS.concat("#8a8fa3").map((c) => (
+              <button
+                key={c}
+                className={c.toLowerCase() === stage.color.toLowerCase() ? "on" : ""}
+                style={{ background: c }}
+                title={c}
+                aria-label={`Renk ${c}`}
+                onClick={() => onPatch({ color: c })}
+              />
+            ))}
+          </div>
+          <div className="menu-sep" />
+          {!canDelete ? (
+            <div className="menu-label muted">Son aşama silinemez</div>
+          ) : confirmDel ? (
+            <button
+              className="danger"
+              onClick={() => {
+                setMenu(null);
+                onDelete();
+              }}
+            >
+              Evet, sil{count ? ` (${count} proje “${fallbackLabel}” sütununa geçer)` : ""}
+            </button>
+          ) : (
+            <button className="danger" onClick={() => setConfirmDel(true)}>
+              Aşamayı sil…
+            </button>
+          )}
+        </div>
+      )}
+    </header>
+  );
+}
 
 /** Panonun sonunda "＋ Aşama ekle" sütunu: tıklayınca ad girilir. */
 function AddStageColumn({ onAdd }: { onAdd: (label: string) => void }) {
@@ -545,21 +677,20 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
               style={{ "--c": s.color } as CSSProperties}
               {...colProps(s.id)}
             >
-              <header
-                className="kcol-head"
-                draggable
-                title="Sütunu sürükleyerek sırasını değiştir"
+              <StageHeader
+                stage={s}
+                count={col.length}
+                canDelete={stages.length > 1}
+                fallbackLabel={(stages[0]?.id === s.id ? stages[1] : stages[0])?.label ?? ""}
+                onPatch={(patch) => onSettings({ stages: stages.map((x) => (x.id === s.id ? { ...x, ...patch } : x)) })}
+                onDelete={() => onSettings({ stages: stages.filter((x) => x.id !== s.id) })}
                 onDragStart={(e) => {
                   e.dataTransfer.effectAllowed = "move";
                   e.dataTransfer.setData("text/plain", s.id);
                   setColDrag(s.id);
                 }}
                 onDragEnd={endColDrag}
-              >
-                <i />
-                <span className="ellipsis">{s.label}</span>
-                <b className="tnum">{col.length}</b>
-              </header>
+              />
               <div className="kcol-body">
                 {col.map(card)}
                 {col.length === 0 && <div className="kcol-empty">{dragId ? "Buraya bırak" : query ? "Eşleşen yok" : "Boş"}</div>}
