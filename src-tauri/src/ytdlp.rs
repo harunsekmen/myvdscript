@@ -40,7 +40,7 @@ fn cookie_args() -> Vec<String> {
     }
 }
 
-pub async fn run(args: Vec<String>) -> Result<Output, String> {
+fn command(args: Vec<String>) -> Result<tokio::process::Command, String> {
     let path = ensure()?;
     let mut cmd = tokio::process::Command::new(path);
     cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
@@ -49,5 +49,38 @@ pub async fn run(args: Vec<String>) -> Result<Output, String> {
     cmd.args(args);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    cmd.output().await.map_err(|e| format!("yt-dlp çalıştırılamadı: {e}"))
+    Ok(cmd)
+}
+
+pub async fn run(args: Vec<String>) -> Result<Output, String> {
+    command(args)?.output().await.map_err(|e| format!("yt-dlp çalıştırılamadı: {e}"))
+}
+
+/// yt-dlp'yi çalıştırır ve stdout'un her satırını geldiği anda `on_line`'a verir.
+/// Dönüş: (başarılı mı, stderr).
+pub async fn run_lines(args: Vec<String>, mut on_line: impl FnMut(&str)) -> Result<(bool, String), String> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+    let mut cmd = command(args)?;
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = cmd.spawn().map_err(|e| format!("yt-dlp çalıştırılamadı: {e}"))?;
+    let stdout = child.stdout.take().ok_or("yt-dlp çıktısı alınamadı")?;
+    let mut stderr = child.stderr.take().ok_or("yt-dlp çıktısı alınamadı")?;
+    let err_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    });
+    let mut reader = BufReader::new(stdout);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        on_line(&String::from_utf8_lossy(&buf));
+    }
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    Ok((status.success(), err_task.await.unwrap_or_default()))
 }

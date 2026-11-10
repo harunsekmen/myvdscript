@@ -1,10 +1,26 @@
 import { useCallback, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { api } from "../lib/api";
+import { api, type ProjectPatch } from "../lib/api";
 import { createAutosaver, type SaveStatus } from "../lib/autosave";
 import { upsertMeta } from "../lib/projectList";
 import { migrateProject, syncTopUrl } from "../lib/sources";
 import { normalizeTimed } from "../lib/timed";
 import type { Project, ProjectMeta, Settings } from "../lib/types";
+
+/** Ana sayfadan yapılan düzenlemeyi liste özetine anında yansıtır. */
+export function applyPatchToMeta(m: ProjectMeta, patch: ProjectPatch): ProjectMeta {
+  const next = { ...m };
+  if (patch.stage !== undefined) next.stage = patch.stage;
+  if (patch.note !== undefined) next.note = patch.note;
+  if (patch.pinned !== undefined) next.pinned = patch.pinned;
+  if (patch.archived !== undefined) next.archived = patch.archived;
+  if (patch.title !== undefined) next.title = patch.title;
+  if (patch.checklist) {
+    next.checklist = patch.checklist;
+    next.checkTotal = patch.checklist.length;
+    next.checkDone = patch.checklist.filter((c) => c.done).length;
+  }
+  return next;
+}
 
 /** Diskten okunan projeyi güncel şemaya getirir (eski projeler tek kaynağa, eski kelimelere kimlik eklenir). */
 export const withSchema = (raw: Project): Project => {
@@ -78,19 +94,15 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
     [lifecycle, saver, patchSettings],
   );
 
-  /** Açılışta: listeyi yükle, son projeyi (yoksa ilkini) aç. */
-  const loadInitial = useCallback(
-    async (lastProjectId: string) => {
-      const list = await refreshProjects();
-      const target = list.find((p) => p.id === lastProjectId) ?? list[0];
-      if (target) show(withSchema(await api.loadProject(target.id)));
-    },
-    [refreshProjects],
-  );
+  /** Açılışta yalnızca liste yüklenir; proje ana sayfadan seçilince açılır. */
+  const loadInitial = useCallback(async () => {
+    await refreshProjects();
+  }, [refreshProjects]);
 
   const createProject = useCallback(
-    async (title: string, url: string) => {
+    async (title: string, url: string, extra?: ProjectPatch) => {
       const p = await api.createProject(title, url);
+      if (extra) await api.patchProject(p.id, extra);
       await refreshProjects();
       await openProject(p.id);
       return p;
@@ -100,19 +112,44 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
 
   const rename = useCallback((title: string) => mutate((p) => ({ ...p, title })), [mutate]);
 
-  const deleteCurrent = useCallback(async () => {
-    const id = projectRef.current?.id;
-    if (!id) return;
-    lifecycle.current.cancel();
-    saver.cancel();
-    await api.deleteProject(id);
-    const list = await refreshProjects();
-    if (list[0]) await openProject(list[0].id);
-    else {
-      show(null);
-      lifecycle.current.reset();
-    }
-  }, [lifecycle, saver, refreshProjects, openProject]);
+  /** Projeyi siler (açık olan da olabilir); açık proje silinirse hiçbir proje açık kalmaz. */
+  const deleteById = useCallback(
+    async (id: string) => {
+      const open = projectRef.current?.id === id;
+      if (open) {
+        lifecycle.current.cancel();
+        saver.cancel();
+      }
+      await api.deleteProject(id);
+      if (open) {
+        show(null);
+        lifecycle.current.reset();
+      }
+      await refreshProjects();
+    },
+    [lifecycle, saver, refreshProjects],
+  );
+
+  /**
+   * Ana sayfadan düzenleme: açık projeyse bellekte (otomatik kayıtla), değilse diskte yamalanır.
+   * Liste özeti anında güncellenir.
+   */
+  const editProject = useCallback(
+    async (id: string, patch: ProjectPatch) => {
+      setProjects((list) => list.map((m) => (m.id === id ? applyPatchToMeta(m, patch) : m)));
+      if (projectRef.current?.id === id) {
+        mutate((p) => ({ ...p, ...patch }));
+        return;
+      }
+      try {
+        await api.patchProject(id, patch);
+      } catch (e) {
+        await refreshProjects();
+        throw e;
+      }
+    },
+    [mutate, refreshProjects],
+  );
 
   const clearAll = useCallback(async () => {
     lifecycle.current.cancel();
@@ -124,5 +161,5 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
     patchSettings({ lastProjectId: "" });
   }, [lifecycle, saver, patchSettings]);
 
-  return { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, rename, deleteCurrent, clearAll };
+  return { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, rename, deleteById, editProject, clearAll };
 }

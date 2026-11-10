@@ -1,3 +1,4 @@
+import { inferStage } from "./home";
 import type { HistoryEntry, Insight, Project, Segment, Source } from "./types";
 
 /** Her kaynakta saklanan önceki işleme sürümü sayısı. */
@@ -37,7 +38,9 @@ export function migrateProject(raw: any): Project {
     ];
   }
   const activeSourceId = list.some((s) => s.id === rest.activeSourceId) ? rest.activeSourceId : list[0].id;
-  return syncTopUrl({ ...rest, sources: list, activeSourceId } as Project);
+  // Aşaması kaydedilmemiş eski projeler için içerikten tahmin edilir.
+  const stage = rest.stage || inferStage({ editorDoc: rest.editorDoc, sources: list });
+  return syncTopUrl({ ...rest, stage, sources: list, activeSourceId } as Project);
 }
 
 export function activeSource(p: Project): Source {

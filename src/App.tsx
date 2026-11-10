@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ConfirmDialog, TextDialog } from "./components/Dialogs";
+import { HomePage } from "./components/HomePage";
 import { LeftPane } from "./components/LeftPane";
 import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -9,9 +10,10 @@ import { SubtitlePicker } from "./components/SubtitlePicker";
 import { TopBar } from "./components/TopBar";
 import { VideoPanel } from "./components/VideoPanel";
 import { usePipeline } from "./hooks/usePipeline";
+import { useVideoStats } from "./hooks/useVideoStats";
 import { useProjectStore, type PipelineLifecycle } from "./hooks/useProjectStore";
 import { useSplitLayout } from "./hooks/useSplitLayout";
-import { api } from "./lib/api";
+import { api, type ProjectPatch } from "./lib/api";
 import { createAutosaver } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
@@ -26,8 +28,9 @@ const DEFAULTS = DEFAULT_SETTINGS;
 
 type Dialog =
   | { kind: "link" }
-  | { kind: "rename" }
-  | { kind: "delete" }
+  | { kind: "rename"; id: string }
+  | { kind: "delete"; id: string }
+  | { kind: "duplicate"; url: string; existingId: string; existingTitle: string }
   | { kind: "clear" }
   | { kind: "removeSource"; id: string }
   | null;
@@ -39,6 +42,8 @@ export default function App() {
   const settingsRef = useRef(settings);
   const [hasKey, setHasKey] = useState(false);
   const [hasGroqKey, setHasGroqKey] = useState(false);
+  const [hasYoutubeKey, setHasYoutubeKey] = useState(false);
+  const [view, setView] = useState<"home" | "project">("home");
   const [tab, setTab] = useState<RightTab>("write");
   const [models, setModels] = useState<string[]>([]);
   const getDocRef = useRef<() => any>(() => null);
@@ -69,9 +74,18 @@ export default function App() {
 
   // Proje durumu ile işleme hattı birbirine bağlıdır (proje değişince işlem iptal edilir); kanca ref ile kurulur.
   const lifecycle = useRef<PipelineLifecycle>({ cancel: () => {}, reset: () => {} });
-  const { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, rename, deleteCurrent, clearAll } =
+  const { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, deleteById, editProject, clearAll } =
     useProjectStore({ patchSettings, lifecycle });
   const pipe = usePipeline({ projectRef, mutate, settingsRef, toast, openSettings: () => setShowSettings(true) });
+  const videoStats = useVideoStats(projects, ready);
+  // Eski sürümlerde bozuk kaydedilmiş başlıklar (�) videonun güncel başlığıyla bir kez onarılır.
+  useEffect(() => {
+    for (const m of projects) {
+      if (!m.title.includes("�")) continue;
+      const fixed = m.sources.map((s) => videoStats.stats[videoIdOf(s.url) ?? ""]?.title).find(Boolean);
+      if (fixed && fixed !== m.title) editProject(m.id, { title: fixed }).catch(() => {});
+    }
+  }, [projects, videoStats.stats, editProject]);
   lifecycle.current = {
     cancel: pipe.cancelRun,
     reset: () => {
@@ -93,13 +107,16 @@ export default function App() {
     (async () => {
       const loaded = await api.loadSettings();
       const s: Settings = { ...DEFAULTS, ...loaded };
+      if (!Array.isArray(s.stages) || !s.stages.length) s.stages = DEFAULTS.stages;
+      if (!Array.isArray(s.defaultChecklist)) s.defaultChecklist = DEFAULTS.defaultChecklist;
       if (!s.systemPrompt.trim() || isLegacySystemPrompt(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       if (!s.insightPrompt.trim()) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
       settingsRef.current = s;
       setSettings(s);
       setHasKey(await api.hasApiKey());
       setHasGroqKey(await api.hasGroqKey());
-      await loadInitial(s.lastProjectId);
+      setHasYoutubeKey(await api.hasYoutubeKey());
+      await loadInitial();
       setReady(true);
       refreshModels(); // yerel sunucular anahtarsız da çalışabilir
     })().catch((e) => {
@@ -136,33 +153,71 @@ export default function App() {
   }, [saver, settingsSaver]);
 
   // ---- Proje işlemleri ----
+  /** Yeni projeye aşama "Fikir" ve varsayılan kontrol listesi verilir. */
+  const newProjectExtra = (): ProjectPatch => ({
+    stage: settingsRef.current.stages[0]?.id ?? "idea",
+    checklist: settingsRef.current.defaultChecklist.map((text) => ({ id: crypto.randomUUID(), text, done: false })),
+  });
+
   const newBlank = async () => {
     try {
-      await createProject("Yeni proje", "");
+      await createProject("Yeni proje", "", newProjectExtra());
+      setView("project");
     } catch (e) {
       toast(`Proje oluşturulamadı: ${e}`, "error");
     }
   };
 
-  const newFromLink = async (url: string) => {
+  const startFromLink = async (url: string) => {
     setDialog(null);
     try {
-      const p = await createProject("Yükleniyor…", url);
+      const p = await createProject("Yükleniyor…", url, newProjectExtra());
+      setView("project");
       await pipe.fetchForSource(p.sources[0].id, url);
     } catch (e) {
       toast(`${e}`, "error");
     }
   };
 
-  const renameCurrent = (title: string) => {
+  /** Aynı video başka projede varsa önce uyarır. */
+  const newFromLink = (url: string) => {
+    const vid = videoIdOf(url.trim());
+    const dup = vid ? projects.find((m) => m.sources.some((s) => videoIdOf(s.url) === vid)) : undefined;
+    if (dup) setDialog({ kind: "duplicate", url: url.trim(), existingId: dup.id, existingTitle: dup.title });
+    else void startFromLink(url.trim());
+  };
+
+  const openFromHome = (id: string) => {
+    // Açık proje yeniden yüklenmez: arka plandaki işlem kesilmesin, kaydedilmemiş değişiklik kaybolmasın.
+    if (projectRef.current?.id === id) return setView("project");
+    openProject(id)
+      .then(() => setView("project"))
+      .catch((e) => toast(`${e}`, "error"));
+  };
+
+  const goHome = useCallback(() => {
+    setView("home");
+    void saver.flush();
+  }, [saver]);
+
+  const edit = (id: string, patch: ProjectPatch) => {
+    editProject(id, patch).catch((e) => toast(`Kaydedilemedi: ${e}`, "error"));
+  };
+
+  const renameProject = (title: string) => {
+    const id = dialog?.kind === "rename" ? dialog.id : null;
     setDialog(null);
-    rename(title);
+    if (id) edit(id, { title });
   };
 
   const deleteProject = async () => {
+    const id = dialog?.kind === "delete" ? dialog.id : null;
     setDialog(null);
+    if (!id) return;
     try {
-      await deleteCurrent();
+      const wasOpen = projectRef.current?.id === id;
+      await deleteById(id);
+      if (wasOpen) setView("home");
     } catch (e) {
       toast(`Silinemedi: ${e}`, "error");
     }
@@ -172,6 +227,7 @@ export default function App() {
     setDialog(null);
     try {
       await clearAll();
+      setView("home");
       toast("Tüm projeler temizlendi");
     } catch (e) {
       toast(`Temizlenemedi: ${e}`, "error");
@@ -212,6 +268,9 @@ export default function App() {
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpenSignal((n) => n + 1);
+      } else if (e.key.toLowerCase() === "h" && !e.shiftKey) {
+        e.preventDefault();
+        goHome();
       } else if (e.shiftKey && e.key.toLowerCase() === "c") {
         e.preventDefault();
         copy("markdown");
@@ -222,7 +281,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [copy]);
+  }, [copy, goHome]);
 
   // ---- Etkin kaynak ve bölme çubuğu ----
   const source = project ? activeSource(project) : null;
@@ -269,6 +328,9 @@ export default function App() {
 
   if (!ready) return <div className="boot">Yükleniyor…</div>;
 
+  const showProject = view === "project" && !!project && !!source;
+  const dialogMeta = dialog?.kind === "rename" || dialog?.kind === "delete" ? projects.find((m) => m.id === dialog.id) : undefined;
+
   const removing =
     dialog?.kind === "removeSource" && project ? project.sources.findIndex((s) => s.id === dialog.id) : -1;
 
@@ -277,17 +339,21 @@ export default function App() {
       <TopBar
         projects={projects}
         currentId={project?.id ?? null}
+        view={showProject ? "project" : "home"}
+        stages={settings.stages}
+        onHome={goHome}
+        onEdit={edit}
         openSignal={openSignal}
-        onSelect={(id) => openProject(id).catch((e) => toast(`${e}`, "error"))}
+        onSelect={openFromHome}
         onNewBlank={newBlank}
         onNewFromLink={() => setDialog({ kind: "link" })}
-        onRename={() => setDialog({ kind: "rename" })}
-        onDelete={() => setDialog({ kind: "delete" })}
+        onRename={() => project && setDialog({ kind: "rename", id: project.id })}
+        onDelete={() => project && setDialog({ kind: "delete", id: project.id })}
         onClearAll={() => setDialog({ kind: "clear" })}
         onSettings={() => setShowSettings(true)}
       />
 
-      {project && source ? (
+      {showProject && project && source ? (
         <main className="split" ref={splitRef}>
           <div className="split-left" style={{ width: `${(hasVideoPane ? L : settings.splitRatio) * 100}%` }}>
             <LeftPane
@@ -346,27 +412,33 @@ export default function App() {
           </div>
         </main>
       ) : (
-        <main className="welcome">
-          <h1>Script Atölyesi</h1>
-          <p className="muted">Bir video linkinden başla ya da boş bir şablonla yaz.</p>
-          <div className="row center">
-            <button className="btn primary" onClick={() => setDialog({ kind: "link" })}>＋ Linkten başlat</button>
-            <button className="btn" onClick={newBlank}>＋ Boş şablon</button>
-          </div>
-        </main>
+        <HomePage
+          projects={projects}
+          settings={settings}
+          runningId={pipe.proc.running ? project?.id ?? null : null}
+          videoStats={videoStats}
+          onOpen={openFromHome}
+          onNewFromLink={() => setDialog({ kind: "link" })}
+          onNewBlank={newBlank}
+          onEdit={edit}
+          onRename={(id) => setDialog({ kind: "rename", id })}
+          onDelete={(id) => setDialog({ kind: "delete", id })}
+          onSettings={patchSettings}
+          focusSignal={openSignal}
+        />
       )}
 
       <footer className="statusbar">
         <span className="muted">
-          {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+Shift+C kopyala
+          {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+H ana sayfa · Ctrl+Shift+C kopyala
         </span>
         <span className="spacer" />
-        {project && (
+        {showProject && (
           <span className={"status-save " + (status.s === "error" ? "err" : status.s === "saved" || status.s === "idle" ? "ok" : "muted")}>
             {statusText || "Kaydedildi ✓"}
           </span>
         )}
-        {project && wordCount && <span className="status-count muted tnum">{wordCount}</span>}
+        {showProject && wordCount && <span className="status-count muted tnum">{wordCount}</span>}
       </footer>
 
       {showSettings && (
@@ -375,10 +447,12 @@ export default function App() {
           models={models}
           hasKey={hasKey}
           hasGroqKey={hasGroqKey}
+          hasYoutubeKey={hasYoutubeKey}
           onChange={patchSettings}
           onModels={setModels}
           onKeyChanged={setHasKey}
           onGroqKeyChanged={setHasGroqKey}
+          onYoutubeKeyChanged={setHasYoutubeKey}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -393,11 +467,26 @@ export default function App() {
       {dialog?.kind === "link" && (
         <TextDialog title="Linkten başlat" label="YouTube video bağlantısı" placeholder="https://www.youtube.com/watch?v=…" confirmLabel="Başlat" onSubmit={newFromLink} onCancel={() => setDialog(null)} />
       )}
-      {dialog?.kind === "rename" && project && (
-        <TextDialog title="Projeyi yeniden adlandır" initial={project.title} confirmLabel="Kaydet" onSubmit={renameCurrent} onCancel={() => setDialog(null)} />
+      {dialog?.kind === "rename" && dialogMeta && (
+        <TextDialog title="Projeyi yeniden adlandır" initial={dialogMeta.title} confirmLabel="Kaydet" onSubmit={renameProject} onCancel={() => setDialog(null)} />
       )}
-      {dialog?.kind === "delete" && project && (
-        <ConfirmDialog title="Projeyi sil" message={`“${project.title}” ve resimleri kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
+      {dialog?.kind === "duplicate" && (
+        <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="modal small-modal">
+            <div className="modal-head"><span className="modal-title">Bu video zaten bir projede</span></div>
+            <div className="modal-body">
+              <p>Bu video “{dialog.existingTitle}” projesinde var. Yine de yeni bir proje oluşturulsun mu?</p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn" onClick={() => setDialog(null)}>Vazgeç</button>
+              <button className="btn" onClick={() => (setDialog(null), openFromHome(dialog.existingId))}>O projeyi aç</button>
+              <button className="btn primary" onClick={() => void startFromLink(dialog.url)} autoFocus>Yine de oluştur</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog?.kind === "delete" && dialogMeta && (
+        <ConfirmDialog title="Projeyi sil" message={`“${dialogMeta.title}” ve resimleri kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === "clear" && (
         <ConfirmDialog title="Tümünü temizle" message="Tüm projeler, scriptler ve kaydedilmiş resimler kalıcı olarak silinecek. Bu işlem geri alınamaz." confirmLabel="Hepsini sil" danger onConfirm={clearEverything} onCancel={() => setDialog(null)} />

@@ -85,6 +85,24 @@ export interface Project {
   editorDoc: any | null; // TipTap JSON
   timed?: TimedDoc | null;
   imageMeta: Record<string, ImageMeta>;
+  /** Ana aşama (Settings.stages içindeki kimlik). */
+  stage?: string;
+  checklist?: CheckItem[];
+  note?: string;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export interface CheckItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface StageDef {
+  id: string;
+  label: string;
+  color: string;
 }
 
 /** Arka plan işleminin (altyazı çekme / AI) anlık durumu; tek seferde tek işlem çalışır. */
@@ -106,7 +124,33 @@ export interface ProjectMeta {
   url: string;
   createdAt: number;
   updatedAt: number;
+  stage: string;
+  checkDone: number;
+  checkTotal: number;
+  checklist: CheckItem[];
+  note: string;
+  pinned: boolean;
+  archived: boolean;
+  /** Kart için tüm video bağlantıları. */
+  sources: { url: string; title: string }[];
 }
+
+/** Bir videonun izlenme vb. istatistikleri (yt-dlp ya da YouTube API'den; video-stats.json önbelleği). */
+export interface VideoStat {
+  id: string;
+  title: string;
+  channel: string;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  duration: number; // sn; 0 = bilinmiyor
+  uploadedAt: number; // ms; 0 = bilinmiyor
+  fetchedAt: number;
+  history: { t: number; views: number }[];
+}
+
+export type HomeSort = "updated" | "views" | "stage" | "created";
+export type StatsSource = "ytdlp" | "api" | "auto";
 
 export interface Settings {
   baseUrl: string;
@@ -130,4 +174,9 @@ export interface Settings {
   lastProjectId: string;
   sttLanguage: string; // Groq ses→yazı dili (boşsa otomatik)
   cookiesBrowser: string; // yt-dlp çerez kaynağı: "" (yok) veya "firefox"
+  stages: StageDef[];
+  defaultChecklist: string[];
+  autoStage: boolean;
+  statsSource: StatsSource;
+  homeSort: HomeSort;
 }

@@ -1,28 +1,31 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { FONT_OPTIONS, fontCss } from "../lib/fonts";
-import { DEFAULT_SETTINGS } from "../lib/settingsDefaults";
-import type { Settings } from "../lib/types";
+import { DEFAULT_SETTINGS, DEFAULT_STAGES } from "../lib/settingsDefaults";
+import type { Settings, StageDef, StatsSource } from "../lib/types";
 
 interface Props {
   settings: Settings;
   models: string[];
   hasKey: boolean;
   hasGroqKey: boolean;
+  hasYoutubeKey: boolean;
   onChange: (patch: Partial<Settings>) => void;
   onModels: (m: string[]) => void;
   onKeyChanged: (has: boolean) => void;
   onGroqKeyChanged: (has: boolean) => void;
+  onYoutubeKeyChanged: (has: boolean) => void;
   onClose: () => void;
 }
 
-type Section = "ai" | "speech" | "prompts" | "look";
+type Section = "ai" | "speech" | "home" | "prompts" | "look";
 type Msg = { text: string; err?: boolean } | null;
 
 // ---- İkonlar (tek renk, çizgi) ----
 const PATHS: Record<string, string> = {
   ai: "M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z",
   speech: "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
+  home: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10",
   prompts: "M4 5h16M4 10h10M4 15h16M4 20h7",
   look: "M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4",
   search: "M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM21 21l-4.3-4.3",
@@ -44,6 +47,7 @@ function Ico({ n, size = 16 }: { n: keyof typeof PATHS; size?: number }) {
 const SECTIONS: { id: Section; label: string; hint: string; keywords: string }[] = [
   { id: "ai", label: "Yapay zekâ", hint: "Bağlantı ve modeller", keywords: "api adres anahtar key model sıcaklık temperature parça chunk openai openrouter deepseek ollama sağlayıcı bağlantı" },
   { id: "speech", label: "Ses ve YouTube", hint: "Groq Whisper, çerezler", keywords: "groq whisper ses konuşma dil stt youtube çerez cookie firefox 429" },
+  { id: "home", label: "Ana sayfa", hint: "Aşamalar, video verisi", keywords: "ana sayfa aşama kontrol listesi izlenme yt-dlp youtube api anahtar pano kart otomatik" },
   { id: "prompts", label: "İstemler", hint: "AI talimatları", keywords: "istem prompt talimat sistem açıklama insight" },
   { id: "look", label: "Görünüm", hint: "Yazı tipi ve düzen", keywords: "yazı tipi font boyut satır aralığı genişlik oran renk segment görünüm" },
 ];
@@ -190,12 +194,63 @@ function KeyInput({ saved, placeholder, onSave }: { saved: boolean; placeholder:
   );
 }
 
-export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onClose }: Props) {
+/** Aşama düzenleyici: ad, renk, sıra, ekle/sil. */
+function StageEditor({ stages, onChange }: { stages: StageDef[]; onChange: (s: StageDef[]) => void }) {
+  const set = (i: number, patch: Partial<StageDef>) => onChange(stages.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= stages.length) return;
+    const next = [...stages];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="stage-editor">
+      {stages.map((st, i) => (
+        <div key={st.id} className="se-row">
+          <input type="color" value={st.color} onChange={(e) => set(i, { color: e.target.value })} aria-label="Renk" />
+          <input className="input" value={st.label} spellCheck={false} onChange={(e) => set(i, { label: e.target.value })} />
+          <button className="icon-btn" disabled={i === 0} onClick={() => move(i, -1)} title="Yukarı" aria-label="Yukarı taşı">↑</button>
+          <button className="icon-btn" disabled={i === stages.length - 1} onClick={() => move(i, 1)} title="Aşağı" aria-label="Aşağı taşı">↓</button>
+          <button className="icon-btn" disabled={stages.length <= 1} onClick={() => onChange(stages.filter((_, j) => j !== i))} title="Sil" aria-label="Aşamayı sil">×</button>
+        </div>
+      ))}
+      <div className="se-foot">
+        <button className="btn small" onClick={() => onChange([...stages, { id: crypto.randomUUID().slice(0, 8), label: "Yeni aşama", color: "#6c8cff" }])}>＋ Aşama ekle</button>
+        <button className="btn small ghost" onClick={() => onChange(DEFAULT_STAGES)}>
+          <Ico n="reset" size={12} /> Varsayılana dön
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Her satır bir madde; yazarken ham metin korunur, boş satırlar kaydedilirken atlanır. */
+function ChecklistEditor({ items, onChange }: { items: string[]; onChange: (v: string[]) => void }) {
+  const [text, setText] = useState(items.join("\n"));
+  return (
+    <textarea
+      className="input"
+      rows={6}
+      spellCheck={false}
+      placeholder="Her satıra bir madde…"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(e.target.value.split("\n").map((l) => l.trim()).filter(Boolean));
+      }}
+    />
+  );
+}
+
+export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYoutubeKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onYoutubeKeyChanged, onClose }: Props) {
   const [section, setSection] = useState<Section>("ai");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
   const [groqMsg, setGroqMsg] = useState<Msg>(null);
+  const [ytMsg, setYtMsg] = useState<Msg>(null);
+  const [ytBusy, setYtBusy] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -236,6 +291,29 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
       setGroqMsg({ text: key.trim() ? "Groq anahtarı kaydedildi" : "Groq anahtarı silindi" });
     } catch (e) {
       setGroqMsg({ text: String(e), err: true });
+    }
+  };
+
+  const saveYoutubeKey = async (key: string) => {
+    try {
+      await api.setYoutubeKey(key);
+      onYoutubeKeyChanged(!!key.trim());
+      setYtMsg({ text: key.trim() ? "YouTube anahtarı kaydedildi" : "YouTube anahtarı silindi" });
+    } catch (e) {
+      setYtMsg({ text: String(e), err: true });
+    }
+  };
+
+  const testYoutubeKey = async () => {
+    setYtBusy(true);
+    setYtMsg(null);
+    try {
+      await api.testYoutubeKey();
+      setYtMsg({ text: "Anahtar geçerli" });
+    } catch (e) {
+      setYtMsg({ text: String(e), err: true });
+    } finally {
+      setYtBusy(false);
     }
   };
 
@@ -324,12 +402,14 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
   const navState: Record<Section, "ok" | "warn" | null> = {
     ai: aiReady ? "ok" : "warn",
     speech: hasGroqKey ? "ok" : null,
+    home: s.statsSource === "api" && !hasYoutubeKey ? "warn" : null,
     prompts: s.systemPrompt !== DEFAULT_SETTINGS.systemPrompt || s.insightPrompt !== DEFAULT_SETTINGS.insightPrompt ? "warn" : null,
     look: null,
   };
   const navTitle: Record<Section, string> = {
     ai: aiReady ? "Hazır" : !hasKey ? "API anahtarı girilmedi" : "Model seçilmedi",
     speech: hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
+    home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
     prompts: navState.prompts ? "Özelleştirilmiş istem var" : "",
     look: "",
   };
@@ -413,6 +493,48 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, onChan
               onChange={(v) => onChange({ cookiesBrowser: v === "firefox" ? "firefox" : "" })}
             />
           </Row>
+        </Card>
+      </>
+    ),
+    home: (
+      <>
+        <Card title="Video verisi" hint="Ana sayfadaki izlenme, süre ve yükleme tarihi her açılışta güncellenir.">
+          <Row label="Veri kaynağı" desc="yt-dlp anahtar gerektirmez; API daha hızlıdır ve engellenmez. Otomatik: önce yt-dlp, alınamayanlar için API." wide>
+            <Segmented<StatsSource>
+              value={s.statsSource}
+              options={[
+                { v: "ytdlp", label: "yt-dlp" },
+                { v: "api", label: "YouTube API" },
+                { v: "auto", label: "Otomatik" },
+              ]}
+              onChange={(v) => onChange({ statsSource: v })}
+            />
+          </Row>
+          <Row label="YouTube API anahtarı" desc="Google Cloud'da YouTube Data API v3'ü etkinleştirip anahtar oluşturun. Windows Kimlik Bilgisi Yöneticisi'nde saklanır." aside={hasYoutubeKey && <span className="s-pill ok">kayıtlı</span>} wide>
+            <KeyInput saved={hasYoutubeKey} placeholder="AIza…" onSave={saveYoutubeKey} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn small" disabled={!hasYoutubeKey || ytBusy} onClick={testYoutubeKey}>
+                <Ico n="refresh" size={12} /> {ytBusy ? "Sınanıyor…" : "Bağlantıyı test et"}
+              </button>
+              <Status msg={ytMsg} />
+            </div>
+          </Row>
+        </Card>
+        <Card title="Aşamalar" hint="Projelerin ana aşamaları. Otomatik aşama ve tahmin kuralları ilk dört varsayılan aşamanın kimliklerini kullanır (Fikir, Altyazı alındı, İşlendi, Script yazılıyor); bunları silerseniz ilgili geçiş çalışmaz.">
+          <StageEditor stages={s.stages} onChange={(stages) => onChange({ stages })} />
+          <Row label="Otomatik aşama" desc="Altyazı alınınca “Altyazı alındı”, işleme bitince “İşlendi” olur. Yalnızca ileri taşır; elle seçtiğiniz daha ileri aşamaya dokunmaz.">
+            <Segmented
+              value={s.autoStage ? "on" : "off"}
+              options={[
+                { v: "on", label: "Açık" },
+                { v: "off", label: "Kapalı" },
+              ]}
+              onChange={(v) => onChange({ autoStage: v === "on" })}
+            />
+          </Row>
+        </Card>
+        <Card title="Varsayılan kontrol listesi" hint="Her yeni projeye bu maddeler kopyalanır.">
+          <ChecklistEditor items={s.defaultChecklist} onChange={(v) => onChange({ defaultChecklist: v })} />
         </Card>
       </>
     ),

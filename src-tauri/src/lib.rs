@@ -3,7 +3,7 @@ mod http;
 mod store;
 mod ytdlp;
 
-use commands::{ai, export, external, images, projects, settings, stt, transcript, tts};
+use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +33,12 @@ pub fn run() {
             projects::save_project,
             projects::delete_project,
             projects::clear_all_projects,
+            projects::patch_project,
+            videos::refresh_video_stats,
+            videos::load_video_stats,
+            videos::test_youtube_key,
+            settings::has_youtube_key,
+            settings::set_youtube_key,
             images::save_image,
             images::read_image,
             images::delete_image,

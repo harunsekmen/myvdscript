@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Project, ProjectMeta, Settings } from "./types";
+import type { CheckItem, Project, ProjectMeta, Settings, VideoStat } from "./types";
 
 export interface Transcript {
   lang: string;
@@ -34,6 +34,16 @@ export interface MediaTranscript {
   words: MediaWord[];
 }
 
+/** Ana sayfadan açık olmayan projeye uygulanabilen alanlar. */
+export interface ProjectPatch {
+  stage?: string;
+  checklist?: CheckItem[];
+  note?: string;
+  pinned?: boolean;
+  archived?: boolean;
+  title?: string;
+}
+
 export const api = {
   listProjects: () => invoke<ProjectMeta[]>("list_projects"),
   createProject: (title: string, url: string) => invoke<Project>("create_project", { title, url }),
@@ -61,6 +71,12 @@ export const api = {
   videoMeta: (url: string) => invoke<{ title: string; description: string; channel: string; chapters: { title: string; start: number }[] }>("video_meta", { url }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   saveTextFile: (path: string, contents: string) => invoke<void>("save_text_file", { path, contents }),
+  patchProject: (id: string, patch: ProjectPatch) => invoke<number>("patch_project", { id, patch }),
+  refreshVideoStats: (urls: string[]) => invoke<VideoStat[]>("refresh_video_stats", { urls }),
+  loadVideoStats: () => invoke<Record<string, VideoStat>>("load_video_stats"),
+  hasYoutubeKey: () => invoke<boolean>("has_youtube_key"),
+  setYoutubeKey: (key: string) => invoke<void>("set_youtube_key", { key }),
+  testYoutubeKey: () => invoke<void>("test_youtube_key"),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
 };
 
@@ -135,4 +151,9 @@ export class CancelledError extends Error {
 /** yt-dlp'nin durum mesajlarını (bağlanma, yeniden deneme) dinler. */
 export function onYtdlpStatus(cb: (msg: string) => void) {
   return listen<string>("ytdlp-status", (e) => cb(e.payload));
+}
+
+/** Bir video istatistiği güncellendiğinde (arka planda tek tek) çağrılır. */
+export function onVideoStat(cb: (s: VideoStat) => void) {
+  return listen<VideoStat>("video-stat", (e) => cb(e.payload));
 }

@@ -5,6 +5,7 @@ use std::fs;
 const SERVICE: &str = "ScriptAtolyesi";
 const USER: &str = "api_key";
 const GROQ_USER: &str = "groq_api_key";
+const YOUTUBE_USER: &str = "youtube_api_key";
 
 fn read_key(user: &str) -> Option<String> {
     keyring::Entry::new(SERVICE, user).ok()?.get_password().ok().filter(|k| !k.is_empty())
@@ -26,6 +27,20 @@ pub fn api_key() -> Option<String> {
 /// Groq (ses → yazı) anahtarı; AI anahtarından ayrı tutulur.
 pub fn groq_key() -> Option<String> {
     read_key(GROQ_USER)
+}
+
+/// YouTube Data API v3 anahtarı (isteğe bağlı; ana sayfa istatistikleri için).
+pub fn youtube_key() -> Option<String> {
+    read_key(YOUTUBE_USER)
+}
+
+/// settings.json'dan tek bir metin ayarı (yoksa boş).
+pub fn setting_str(key: &str) -> String {
+    fs::read_to_string(store::settings_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v[key].as_str().map(|s| s.trim().to_string()))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -60,4 +75,14 @@ pub fn has_groq_key() -> bool {
 #[tauri::command]
 pub fn set_groq_key(key: String) -> Result<(), String> {
     write_key(GROQ_USER, &key)
+}
+
+#[tauri::command]
+pub fn has_youtube_key() -> bool {
+    youtube_key().is_some()
+}
+
+#[tauri::command]
+pub fn set_youtube_key(key: String) -> Result<(), String> {
+    write_key(YOUTUBE_USER, &key)
 }

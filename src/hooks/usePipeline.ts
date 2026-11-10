@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { api, type SubOption, type SubtitleList } from "../lib/api";
+import { advanceStage } from "../lib/home";
 import { PipelineError, processTranscript, type PipelineRun, type ResumeState } from "../lib/pipeline";
 import { buildCustomRunSystemPrompt } from "../lib/prompts";
 import { segmentsToMarkdown } from "../lib/segmentParser";
@@ -45,6 +46,19 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
   const resumeRef = useRef<Resumable | null>(null);
   /** İptal edilemeyen bekleyen işlemler (altyazı çekme/liste) için jeton: değişirse sonuç yok sayılır. */
   const opRef = useRef(0);
+
+  /** Otomatik aşama (ayar açıksa): proje hâlâ açıksa aşamayı yalnızca ileri taşır. */
+  const bumpStage = useCallback(
+    (pid: string | undefined, target: string) => {
+      const st = settingsRef.current;
+      if (!st.autoStage || !pid || projectRef.current?.id !== pid) return;
+      mutate((p) => {
+        const to = advanceStage(st.stages, p.stage, target);
+        return to ? { ...p, stage: to } : p;
+      });
+    },
+    [projectRef, mutate, settingsRef],
+  );
 
   /** Proje değişimi/silme için: çalışan her şeyi geçersiz kıl. */
   const cancelRun = useCallback(() => {
@@ -99,6 +113,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         const segs = await pipeline.promise;
         if (gone()) return;
         mutate((p) => patchSource(p, sourceId, (src) => applyProcessed(src, segs, o.label, Date.now(), historyPushed)));
+        bumpStage(pid, "processed");
         setProc(IDLE);
       } catch (e: any) {
         if (gone()) return;
@@ -120,7 +135,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         if (runRef.current === pipeline) runRef.current = null;
       }
     },
-    [projectRef, mutate, settingsRef, openSettings],
+    [projectRef, mutate, settingsRef, openSettings, bumpStage],
   );
 
   /** Hata/iptal sonrası kaldığı parçadan devam eder. */
@@ -147,6 +162,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
           const q = patchSource(p, sourceId, (s) => ({ ...s, url, transcriptRaw: tr.text, title: manualTitle?.trim() || s.title.trim() || title }));
           return title && NEW_TITLES.includes(q.title) ? { ...q, title } : q;
         });
+        bumpStage(pid, "subs");
         toast(`Altyazı alındı (${tr.lang})`);
         await run(sourceId, tr.text, { label: `Altyazı: ${tr.lang}` });
       } catch (e: any) {
@@ -154,7 +170,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         setProc({ ...IDLE, sourceId, error: String(e?.message ?? e) });
       }
     },
-    [projectRef, mutate, run, toast],
+    [projectRef, mutate, run, toast, bumpStage],
   );
 
   /** Etkin kaynağın altyazısını varsayılan istemle yeniden işler (altyazı yoksa bağlantıdan yeniden çeker). */
@@ -229,6 +245,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         const tr = await api.fetchTranscript(pick.url, opt.lang, opt.auto);
         if (opRef.current !== token || projectRef.current?.id !== pid) return;
         mutate((p) => patchSource(p, pick.sourceId, (s) => ({ ...s, transcriptRaw: tr.text, title: s.title.trim() || pick.list.title })));
+        bumpStage(pid, "subs");
         toast(`Altyazı alındı (${tr.lang}${tr.auto ? ", otomatik" : ""})`);
         await run(pick.sourceId, tr.text, { label: `Altyazı: ${tr.lang}${tr.auto ? " (otomatik)" : ""}` });
       } catch (e: any) {
@@ -236,7 +253,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         setProc({ ...IDLE, sourceId: pick.sourceId, error: String(e?.message ?? e) });
       }
     },
-    [subPick, projectRef, mutate, run, toast],
+    [subPick, projectRef, mutate, run, toast, bumpStage],
   );
 
   /** Geçmişteki bir işleme sürümünü geri getirir (mevcut sürüm onunla yer değiştirir). */

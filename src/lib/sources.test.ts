@@ -43,6 +43,13 @@ describe("proje geçişi (eski -> kaynaklı)", () => {
     expect("transcriptRaw" in p).toBe(false);
   });
 
+  it("aşama yoksa içerikten tahmin edilir, varsa korunur", () => {
+    expect(migrateProject(legacy).stage).toBe("processed");
+    expect(migrateProject({ ...legacy, segments: [] }).stage).toBe("subs");
+    expect(migrateProject({ ...legacy, segments: [], transcriptRaw: "" }).stage).toBe("idea");
+    expect(migrateProject({ ...legacy, stage: "filmed" }).stage).toBe("filmed");
+  });
+
   it("boş proje bir boş kaynak alır, geçici başlık kaynak başlığı olmaz", () => {
     const p = migrateProject({ ...legacy, title: "Yeni proje", url: "", transcriptRaw: undefined, segments: undefined, insights: undefined });
     expect(p.sources).toHaveLength(1);
@@ -131,12 +138,30 @@ describe("proje listesi güncelleme", () => {
     const list = [
       { id: "a", title: "A", url: "", createdAt: 1, updatedAt: 50 },
       { id: "b", title: "B", url: "", createdAt: 1, updatedAt: 40 },
-    ];
+    ] as any[];
     const p = { ...migrateProject(legacy), id: "b", title: "B2" };
     const next = upsertMeta(list, p, 99);
     expect(next.map((m) => m.id)).toEqual(["b", "a"]);
     expect(next[0].title).toBe("B2");
     expect(next[0].updatedAt).toBe(99);
     expect(upsertMeta([], p, 1)).toEqual([]);
+  });
+});
+
+describe("proje listesi özeti", () => {
+  it("yeni alanlar kayıtla birlikte listeye işlenir", () => {
+    const p: Project = {
+      ...migrateProject(legacy),
+      checklist: [
+        { id: "1", text: "a", done: true },
+        { id: "2", text: "b", done: false },
+      ],
+      note: "not",
+      pinned: true,
+    };
+    const meta = { id: "p1", title: "x", url: "", createdAt: 5, updatedAt: 6 } as any;
+    const [m] = upsertMeta([meta], p, 50);
+    expect(m).toMatchObject({ stage: "processed", checkDone: 1, checkTotal: 2, note: "not", pinned: true, archived: false, updatedAt: 50 });
+    expect(m.sources).toEqual([{ url: "https://youtu.be/abc", title: "Eski proje" }]);
   });
 });
