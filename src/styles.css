@@ -425,7 +425,7 @@ mark.hl:hover { background: #f2b44d55; }
 .tw.sug { color: #f3b3be; text-decoration: line-through; text-decoration-color: #ef7a8c99; }
 .timg-wrap, .tnote-wrap { cursor: grab; }
 .timg-wrap { display: inline; }
-.wbar { position: fixed; z-index: 45; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 2px; padding: 4px; background: #242835; border: 1px solid #3a4160; border-radius: 10px; box-shadow: 0 10px 26px #000a; animation: wbar-in .12s ease-out; }
+.wbar { position: fixed; z-index: 45; transform: translate(0, -100%); max-width: calc(100vw - 16px); display: flex; align-items: center; gap: 2px; padding: 4px; background: #242835; border: 1px solid #3a4160; border-radius: 10px; box-shadow: 0 10px 26px #000a; animation: wbar-in .12s ease-out; }
 .wbar-word { font-family: var(--write-font); font-size: 12px; color: var(--muted); padding: 0 8px 0 6px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid var(--line); margin-right: 2px; }
 .wbar button { background: none; border: none; color: var(--text); font-size: 12.5px; padding: 5px 9px; border-radius: 7px; white-space: nowrap; }
 .wbar button:hover { background: var(--bg-3); color: #fff; }

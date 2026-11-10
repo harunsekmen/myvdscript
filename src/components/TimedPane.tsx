@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type MouseEvent as RMouseEvent } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { DEFAULT_SILENCE_SEC, acceptedRanges, buildCuts, cutWordIds } from "../lib/cutList";
@@ -117,15 +117,64 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
     return m;
   }, [doc.items]);
 
-  // Seçili kelime değişince / kaydırılınca araç çubuğunun konumunu ölç
+  // Çoklu seçim: sel = başlangıç, selEnd = bitiş (sürükleyerek ya da Shift+tık ile)
+  const [selEnd, setSelEnd] = useState<string | null>(null);
+  const dragSel = useRef(false);
+  useEffect(() => {
+    const up = () => (dragSel.current = false);
+    document.addEventListener("mouseup", up);
+    return () => document.removeEventListener("mouseup", up);
+  }, []);
+  const wordOrder = useMemo(() => {
+    const m = new Map<string, number>();
+    let i = 0;
+    for (const it of doc.items) if (it.k === "w") m.set(it.id, i++);
+    return m;
+  }, [doc.items]);
+  const selIds = useMemo(() => {
+    if (!sel || !wordOrder.has(sel)) return [] as string[];
+    if (!selEnd || selEnd === sel || !wordOrder.has(selEnd)) return [sel];
+    const a = Math.min(wordOrder.get(sel)!, wordOrder.get(selEnd)!);
+    const b = Math.max(wordOrder.get(sel)!, wordOrder.get(selEnd)!);
+    return doc.items.filter((it): it is WordItem => it.k === "w" && wordOrder.get(it.id)! >= a && wordOrder.get(it.id)! <= b).map((it) => (it as WordItem).id);
+  }, [sel, selEnd, wordOrder, doc.items]);
+  const selSet = useMemo(() => new Set(selIds), [selIds]);
+  const clearSel = () => {
+    setSel(null);
+    setSelEnd(null);
+  };
+
+  // Seçili kelime değişince / kaydırılınca araç çubuğunun konumunu ölç (çoklu seçimde son kelime)
   const measure = (id: string) => {
-    const el = document.getElementById("w-" + id);
+    const el = document.getElementById("w-" + (selEnd ?? id));
     setSelRect(el ? el.getBoundingClientRect() : null);
   };
   useLayoutEffect(() => {
     if (sel) measure(sel);
     else setSelRect(null);
-  }, [sel, doc.items]);
+  }, [sel, selEnd, doc.items]);
+
+  useEffect(() => {
+    if (!sel) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && !(e.target as HTMLElement).closest?.("input, textarea") && clearSel();
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [sel]);
+
+  // Araç çubuğu panel kenarından taşmasın
+  const wbarRef = useRef<HTMLDivElement>(null);
+  const timedRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const bar = wbarRef.current;
+    if (!bar || !selRect) return;
+    const box = timedRef.current?.getBoundingClientRect();
+    const minX = Math.max(8, box ? box.left + 8 : 8);
+    const maxX = Math.min(window.innerWidth - 8, box ? box.right - 8 : window.innerWidth - 8);
+    const w = bar.offsetWidth;
+    const center = selRect.left + selRect.width / 2;
+    const left = Math.min(Math.max(center - w / 2, minX), Math.max(minX, maxX - w));
+    bar.style.left = `${left}px`;
+  });
 
   const openNote = (id: string) => {
     const el = document.getElementById("n-" + id);
@@ -275,6 +324,7 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
   const rejectAll = () => commit(docRef.current.items, {});
   const focusWord = (id: string) => {
     setSel(id);
+    setSelEnd(null);
     flash(id, true);
   };
   const flash = (id: string, scroll = false) => {
@@ -354,9 +404,25 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
     fileInput.current?.click();
   };
 
-  const selectWord = (id: string) => {
-    if (sel === id) return;
+  const onWordDown = (e: RMouseEvent, id: string) => {
+    if (e.button !== 0 || e.detail > 1) return;
+    e.preventDefault(); // tarayıcının metin seçimini engelle; yapıştırma için odak elle verilir
+    timedRef.current?.focus({ preventScroll: true });
+    if (e.shiftKey && sel) {
+      setSelEnd(id);
+      return;
+    }
     setSel(id);
+    setSelEnd(null);
+    dragSel.current = true;
+  };
+  const onWordEnter = (id: string) => {
+    if (dragSel.current && sel) setSelEnd(id === sel ? null : id);
+  };
+  const markRange = (mark: boolean) => {
+    let d = docRef.current;
+    for (const id of selIds) d = toggleDisfluent(d, id, mark);
+    onDoc(d);
   };
 
   const renderItem = (item: TimedItem, idx: number, items: TimedItem[]) => {
@@ -365,7 +431,7 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
       case "w": {
         const sug = sugs[item.id];
         const isEditing = editWord === item.id;
-        const isSel = sel === item.id;
+        const isSel = selSet.has(item.id);
         const isDrop = dropId === item.id;
         if (isEditing) {
           return (
@@ -402,9 +468,11 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
               title={dis.has(item.id) ? `${DISFLUENCY_LABEL[dis.get(item.id)!]}: kopyalarken işaretlenir` : undefined}
               data-anchor={item.id}
               data-time={fmtTime(item.s, 1)}
-              onClick={() => selectWord(item.id)}
+              onMouseDown={(e) => onWordDown(e, item.id)}
+              onMouseEnter={() => onWordEnter(item.id)}
               onDoubleClick={() => {
                 setSel(item.id);
+                setSelEnd(null);
                 setEditWord(item.id);
               }}
             >
@@ -518,11 +586,11 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
       </div>
     )}
     {showCuts && <CutListPanel doc={doc} cuts={cuts} onDoc={onDoc} onJump={focusWord} onToast={onToast} />}
-    <div className="timed" tabIndex={0} onPaste={onPaste} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onScroll={() => {
+    <div className="timed" ref={timedRef} tabIndex={0} onPaste={onPaste} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onScroll={() => {
       if (sel) measure(sel);
       if (noteOpen) closeNote();
     }} onClick={(e) => {
-      if (!(e.target as HTMLElement).closest("[data-anchor]") && !(e.target as HTMLElement).closest(".wbar")) setSel(null);
+      if (!(e.target as HTMLElement).closest("[data-anchor]") && !(e.target as HTMLElement).closest(".wbar")) clearSel();
     }}>
       <input
         ref={fileInput}
@@ -604,8 +672,31 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
         );
       })()}
 
-      {selWord && selRect && (
-        <div className="wbar" style={{ left: selRect.left + selRect.width / 2, top: selRect.top - 8 }} onMouseDown={(e) => e.preventDefault()}>
+      {selWord && selRect && selIds.length > 1 && (() => {
+        const allDis = selIds.every((id) => dis.has(id));
+        const last = selIds[selIds.length - 1];
+        return (
+          <div className="wbar" ref={wbarRef} style={{ top: selRect.top - 8 }} onMouseDown={(e) => e.preventDefault()}>
+            <span className="wbar-word">{selIds.length} kelime</span>
+            <button onClick={() => addNote(last)} title="Seçimin sonuna not ekle">📝 Not</button>
+            <button onClick={() => pickImageFor(last)} title="Seçimin sonuna bilgisayardan resim ekle">🖼 Resim</button>
+            {allDis ? (
+              <button onClick={() => markRange(false)} title="Seçili kelimeler gereksiz değil; normal göster">◉ Gerekli</button>
+            ) : (
+              <>
+                <button onClick={() => markRange(true)} title="Seçili kelimelerin hepsini gereksiz olarak işaretle">◌ Gereksiz</button>
+                {selIds.some((id) => dis.has(id)) && (
+                  <button onClick={() => markRange(false)} title="Seçimdeki işaretleri kaldır">◉ Gerekli</button>
+                )}
+              </>
+            )}
+            <button onClick={clearSel} title="Seçimi kaldır (Esc)">✕</button>
+          </div>
+        );
+      })()}
+
+      {selWord && selRect && selIds.length <= 1 && (
+        <div className="wbar" ref={wbarRef} style={{ top: selRect.top - 8 }} onMouseDown={(e) => e.preventDefault()}>
           <span className="wbar-word">{selWord.w}</span>
           <button onClick={() => addNote(selWord.id)} title="Bu kelimeden sonra not ekle">📝 Not</button>
           <button onClick={() => pickImageFor(selWord.id)} title="Bu kelimeden sonra bilgisayardan resim ekle">🖼 Resim</button>
