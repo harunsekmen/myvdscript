@@ -55,7 +55,7 @@ interface ParaOpts {
  * Paragrafı; açıklama vurgularını, çalan cümleyi ve cümle zamanlarını (data-t) birlikte üretir.
  * Her parça, bulunduğu cümlenin zamanını data-t ile taşır; çift tıklayınca oradan başlamak için kullanılır.
  */
-function renderPara(text: string, insights: Insight[], onOpen: (id: string) => void, o: ParaOpts) {
+function renderPara(text: string, insights: Insight[], onOpen: (id: string, e: React.MouseEvent) => void, o: ParaOpts) {
   const list = insights
     .filter((i) => i.segmentId === o.segId && i.para === o.para)
     .sort((a, b) => a.start - b.start);
@@ -84,7 +84,7 @@ function renderPara(text: string, insights: Insight[], onOpen: (id: string) => v
     let node: React.ReactNode = inCur ? <span className="cur">{piece}</span> : piece;
     if (ins) {
       node = (
-        <mark className="hl" data-insight={ins.id} onClick={() => !window.getSelection()?.toString() && onOpen(ins.id)}>
+        <mark className="hl" data-insight={ins.id} onClick={(e) => onOpen(ins.id, e)}>
           {node}
         </mark>
       );
@@ -320,12 +320,27 @@ export function LeftPane({
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
+  // Vurguya tek tık açıklama kartını açar; çift tıkla karışmasın diye kısa bir gecikmeyle açılır.
+  const openTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(openTimer.current), []);
+  const onMarkClick = (id: string, e: React.MouseEvent) => {
+    window.clearTimeout(openTimer.current);
+    if (e.detail > 1) return;
+    openTimer.current = window.setTimeout(() => {
+      if (!window.getSelection()?.toString()) setActiveId(id);
+    }, 280);
+  };
+
   // Metni çift tıklayınca o cümle çalar ve cümle bitince durur. Tek tık normal metin seçimi içindir.
+  // Açıklama vurgulu cümlelerde de geçerlidir: kart açılmaz, video o cümleye gider.
   const onParaDoubleClick = (e: React.MouseEvent<HTMLParagraphElement>) => {
     const el = e.target as HTMLElement;
-    if (el.closest("mark.hl")) return;
     const tAttr = el.closest<HTMLElement>("[data-t]")?.dataset.t;
     if (tAttr == null || !hasVideo) return;
+    if (el.closest("mark.hl")) {
+      window.clearTimeout(openTimer.current);
+      setActiveId(null);
+    }
     // Çift tık tarayıcıda kelime seçimi de başlatır; oynatma için bu seçimi ve balonu temizle.
     window.getSelection()?.removeAllRanges();
     setSel(null);
@@ -603,7 +618,7 @@ export function LeftPane({
                   <div className="seg-label" style={{ color: st.label }}>{seg.title}</div>
                   {(paras.get(seg.id) ?? []).map((p, pi) => (
                     <p key={pi} data-seg={seg.id} data-para={pi} onDoubleClick={onParaDoubleClick}>
-                      {renderPara(p, source.insights, setActiveId, {
+                      {renderPara(p, source.insights, onMarkClick, {
                         segId: seg.id,
                         para: pi,
                         marks: seg.marks,

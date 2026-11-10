@@ -494,6 +494,35 @@ pub async fn video_meta(url: String) -> Result<VideoMeta, String> {
     Ok(VideoMeta { title: s("title"), description: s("description"), channel, chapters })
 }
 
+/// Kare görüntüleyici için videonun doğrudan (sessiz) görüntü akışı adresi (yt-dlp -g).
+/// WebView2'nin çözebildiği kodekler öne alınır; en fazla 1080p.
+#[tauri::command]
+pub async fn video_stream_url(url: String) -> Result<String, String> {
+    check_url(&url)?;
+    let out = ytdlp::run(vec![
+        "-g".into(),
+        "--no-warnings".into(),
+        "--no-playlist".into(),
+        "-f".into(),
+        "bv*[height<=1080][vcodec^=avc1]/bv*[height<=1080][vcodec^=vp9]/bv*[height<=1080]/b".into(),
+        url,
+    ])
+    .await?;
+    if !out.status.success() {
+        if is_rate_limited(&out) {
+            return Err(RATE_LIMIT_MSG.into());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("Video akışı alınamadı: {}", err.lines().last().unwrap_or("bilinmeyen hata")));
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("http"))
+        .map(String::from)
+        .ok_or_else(|| "Video akışı bulunamadı".into())
+}
+
 /// Varsayılan altyazıyı alır: özgün dildeki iz, yoksa İngilizce/Türkçe, yoksa videodaki ilk altyazı.
 #[tauri::command]
 pub async fn fetch_default_transcript(url: String) -> Result<Transcript, String> {

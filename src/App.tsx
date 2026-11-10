@@ -17,7 +17,7 @@ import { api, type ProjectPatch } from "./lib/api";
 import { createAutosaver } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
-import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacySystemPrompt } from "./lib/prompts";
+import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
 import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
 import type { ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
@@ -110,7 +110,7 @@ export default function App() {
       if (!Array.isArray(s.stages) || !s.stages.length) s.stages = DEFAULTS.stages;
       if (!Array.isArray(s.defaultChecklist)) s.defaultChecklist = DEFAULTS.defaultChecklist;
       if (!s.systemPrompt.trim() || isLegacySystemPrompt(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
-      if (!s.insightPrompt.trim()) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
+      if (!s.insightPrompt.trim() || isLegacyInsightPrompt(s.insightPrompt)) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
       settingsRef.current = s;
       setSettings(s);
       setHasKey(await api.hasApiKey());

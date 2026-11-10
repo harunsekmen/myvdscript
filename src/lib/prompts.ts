@@ -32,9 +32,17 @@ const LEGACY_HASHES = new Set(["1os75xh12ig", "tw8w76b21k", "2663osxizfv", "10pd
 export const isLegacySystemPrompt = (prompt: string) => LEGACY_HASHES.has(hashString(prompt));
 export const LEGACY_SYSTEM_PROMPT_HASHES: ReadonlySet<string> = LEGACY_HASHES;
 
-export const DEFAULT_INSIGHT_PROMPT = `Sen bilgili bir araştırma asistanısın. Kullanıcı bir video metninden seçtiği ifadeyi sana verecek. Bu ifade veya kavramın ne olduğunu, bağlam içinde ne anlama geldiğini Türkçe ve ayrıntılı biçimde açıkla. Gerekirse kısa örnekler ver.
+export const DEFAULT_INSIGHT_PROMPT = `Sen bilgili bir araştırma asistanısın. Kullanıcı bir video metninden seçtiği kelimeyi, ifadeyi ya da cümleyi sana verecek. Yalnızca seçilen şeyi ele al: ne olduğunu (kişi, kurum, ürün, kavram, olay, kaynak vb.) ve bu bağlamda ne anlama geldiğini Türkçe olarak KISACA söyle.
 
-Web araması yapamazsın; sadece kendi bilginle yanıt ver. Kesin olarak bilmediğin bir şey varsa bunu açıkça söyle, tahmin yürütüp kesinmiş gibi sunma.`;
+Kurallar:
+- En fazla 2-4 cümle yaz; giriş, özet, başlık, madde listesi veya örnek ekleme.
+- Seçilen ifade bir iddia ya da bilgi içeriyorsa doğru olup olmadığını tek cümleyle belirt.
+- Çevredeki metni yalnızca anlamı netleştirmek için kullan; onu açıklama veya özetleme.
+- Web araması yapamazsın; sadece kendi bilginle yanıt ver. Emin değilsen bunu kısaca söyle, tahmini kesinmiş gibi sunma.`;
+
+/** Eski varsayılan açıklama istemlerinin özetleri; kullanıcı değiştirmediyse yenisine geçilir. */
+const LEGACY_INSIGHT_HASHES = new Set(["1ynb7gddxgw"]);
+export const isLegacyInsightPrompt = (prompt: string) => LEGACY_INSIGHT_HASHES.has(hashString(prompt));
 
 /** Altyazı satırlarındaki [dk:sn] işaretleri (satırın videodaki zamanı) varsa AI'ın cümlelere taşıması gerekir. */
 const TIMED_CHUNK = /\[\d{1,4}:\d{2}\]/;
@@ -84,5 +92,5 @@ Kurallar:
 Hiç düzeltme gerekmiyorsa: {"fixes":[]}`;
 
 export function buildInsightMessage(selected: string, context: string): string {
-  return `Seçilen ifade:\n"${selected}"\n\nÇevresindeki metin (bağlam):\n${context}\n\nBu ifadeyi/kavramı açıkla.`;
+  return `Seçilen ifade:\n"${selected}"\n\nÇevresindeki metin (bağlam):\n${context}\n\nYalnızca seçilen ifadenin ne olduğunu kısaca (en fazla 2-4 cümle) açıkla.`;
 }

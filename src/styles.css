@@ -720,3 +720,16 @@ button.stage-pill:hover { background: color-mix(in srgb, var(--c) 28%, transpare
 .se-row { display: flex; align-items: center; gap: 6px; }
 .se-row input[type=color] { width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; cursor: pointer; }
 .se-foot { display: flex; gap: 8px; margin-top: 4px; }
+
+/* Tam ekran kare görüntüleyici (ekran görüntüsü için arayüzsüz kare) */
+.frame-viewer { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; place-items: center; }
+.frame-viewer video { width: 100vw; height: 100vh; object-fit: contain; display: block; pointer-events: none; }
+.frame-viewer-msg { position: absolute; color: rgba(255, 255, 255, .7); font-size: 14px; }
+.frame-viewer-msg.error { color: #ff8a8a; max-width: 70vw; text-align: center; }
+.frame-viewer-bar { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; opacity: .35; transition: opacity .15s; }
+.frame-viewer-bar:hover { opacity: 1; }
+.frame-viewer-bar span { font: 12px/1 ui-monospace, monospace; color: #fff; background: rgba(0, 0, 0, .55); padding: 6px 8px; border-radius: 8px; }
+.frame-viewer-x { width: 34px; height: 34px; display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; cursor: pointer; }
+.frame-viewer-x:hover { background: rgba(255, 255, 255, .2); }
+.frame-viewer.idle { visibility: hidden; pointer-events: none; }
+.frame-viewer video.stale { visibility: hidden; }

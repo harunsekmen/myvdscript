@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
 import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
+import { FrameViewer } from "./FrameViewer";
 
 interface Meta {
   title: string;
@@ -56,6 +57,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
   const [meta, setMeta] = useState<Meta | null>(id ? metaCache.get(id) ?? null : null);
   const [open, setOpen] = useState(false);
   const [rate, setRateState] = useState(1);
+  const [shot, setShot] = useState<number | null>(null);
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
   const cues = useMemo(() => parseCues(transcriptRaw), [transcriptRaw]);
 
@@ -106,6 +108,11 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
     } catch (e: any) {
       onToast(`Video oynatılamadı: ${e?.message ?? e}`, "error");
     }
+  };
+  const closeShot = () => setShot(null);
+  const openShot = () => {
+    if (vs.playing) pauseVideo();
+    setShot(time);
   };
   const pickRate = (r: number) => {
     setRateState(r);
@@ -172,6 +179,11 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
               <Icon d="m5 4 10 8-10 8V4ZM19 4v16" />
             </button>
           </div>
+          <div className="vp-group">
+            <button className="vp-btn" onClick={openShot} disabled={!ready} title="Bu anın karesini tam ekran göster (ekran görüntüsü için)" aria-label="Kareyi tam ekran göster">
+              <Icon d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3ZM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+            </button>
+          </div>
           <div className="vp-rates" role="group" aria-label="Oynatma hızı">
             {RATES.map((r) => (
               <button key={r} className={r === rate ? "on" : ""} onClick={() => pickRate(r)} disabled={!ready}>{r}×</button>
@@ -226,6 +238,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
           )}
         </div>
       </div>
+      <FrameViewer videoId={id} url={url} open={shot != null} target={shot ?? (ready && !vs.playing ? time : null)} onClose={closeShot} />
     </div>
   );
 }

@@ -57,6 +57,7 @@ pub fn run() {
             ai::ai_cancel,
             tts::tts,
             transcript::video_meta,
+            transcript::video_stream_url,
             external::open_external,
             export::save_text_file,
         ])
