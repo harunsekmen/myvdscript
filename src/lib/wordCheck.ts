@@ -1,7 +1,8 @@
 import { streamChat } from "./api";
+import { parseDrops } from "./disfluency";
 import { WORD_CHECK_PROMPT } from "./prompts";
 import { fmtTime, wordNumbers } from "./timed";
-import type { Settings, TimedDoc } from "./types";
+import type { DisfluencyKind, Settings, TimedDoc } from "./types";
 
 const CHUNK_WORDS = 180;
 
@@ -36,18 +37,19 @@ export function parseFixes(text: string, words: WordRef[]): Record<string, strin
 }
 
 /**
- * Zamanlı metni parçalar halinde AI'a gönderir ve kelime düzeltme önerilerini toplar.
+ * Zamanlı metni parçalar halinde AI'a gönderir; kelime düzeltme önerilerini ve gereksiz (dolgu/tekrar) kelimeleri toplar.
  * onProgress(tamamlanan, toplam) her parçadan sonra çağrılır.
  */
 export async function checkWords(
   doc: TimedDoc,
   s: Settings,
   onProgress: (done: number, total: number) => void,
-): Promise<Record<string, string>> {
+): Promise<{ fixes: Record<string, string>; drops: Record<string, DisfluencyKind> }> {
   const words = wordNumbers(doc.items);
   const chunks: WordRef[][] = [];
   for (let i = 0; i < words.length; i += CHUNK_WORDS) chunks.push(words.slice(i, i + CHUNK_WORDS));
   const all: Record<string, string> = {};
+  const drops: Record<string, DisfluencyKind> = {};
   onProgress(0, chunks.length);
   for (let i = 0; i < chunks.length; i++) {
     const lines = chunks[i].map((w) => `${w.n} [${fmtTime(w.s, 1)}] ${w.w}`).join("\n");
@@ -59,7 +61,8 @@ export async function checkWords(
       temperature: 0,
     }).done;
     Object.assign(all, parseFixes(text, chunks[i]));
+    Object.assign(drops, parseDrops(text, chunks[i]));
     onProgress(i + 1, chunks.length);
   }
-  return all;
+  return { fixes: all, drops };
 }

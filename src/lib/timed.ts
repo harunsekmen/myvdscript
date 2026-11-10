@@ -1,4 +1,4 @@
-import type { ImageMeta, TimedDoc, TimedItem } from "./types";
+import type { DisfluencyKind, ImageMeta, TimedDoc, TimedItem } from "./types";
 import type { CopyMode } from "./copyExport";
 
 export interface Line {
@@ -79,25 +79,52 @@ const oneLine = (s: string) => s.replace(/\s*\n\s*/g, " ").trim();
  * - "markdown": kelimeler zamanlarıyla + notlar + resimler (açıklama satırıyla birlikte)
  * - "text": yalnızca zamanlı kelimeler
  */
-export function exportTimed(doc: TimedDoc | null, meta: Record<string, ImageMeta>, mode: CopyMode): string {
+export function exportTimed(
+  doc: TimedDoc | null,
+  meta: Record<string, ImageMeta>,
+  mode: CopyMode,
+  disfluent?: ReadonlyMap<string, DisfluencyKind>,
+): string {
   if (!doc || !doc.items.length) return "";
   const full = mode === "markdown";
+  const marks = full ? disfluent : undefined;
   const out: string[] = [];
   if (full) {
     out.push(
       "Aşağıdaki metin kelime kelime zamanlı bir altyazıdır; her kelimenin önündeki [dakika:saniye.salise] o kelimenin başlangıç zamanıdır.",
       "\"[NOT ...]\" ve \"[RESİM ...]\" ile başlayan satırlar konuşma değil, yazarın eklediği notlar ve görsellerdir; altyazı metni olarak değil, yazarın yorumu/ekleri olarak ele al.",
-      "",
     );
+    if (marks?.size) {
+      out.push(
+        "⟦GEREKSİZ …⟧ içine alınmış kelimeler gereksizdir: dolgu sesi/kelimesi (ıı, ee, şey, yani…), gereksiz tekrar ya da konuşmacının yarım bırakıp yeniden söylediği öbek. Bunlar videoda kesilecek; anlatımın parçası sayma, metne/senaryoya dahil etme.",
+      );
+    }
+    out.push("");
   }
   let line: string[] = [];
+  // Art arda gelen aynı türdeki gereksiz kelimeler tek ⟦…⟧ içinde toplanır.
+  let run: { kind: DisfluencyKind; words: string[] } | null = null as { kind: DisfluencyKind; words: string[] } | null;
+  const endRun = () => {
+    if (run) line.push(`⟦GEREKSİZ ${DISFLUENCY_TAG[run.kind]}: ${run.words.join(" ")}⟧`);
+    run = null;
+  };
   const flush = () => {
+    endRun();
     if (line.length) out.push(line.join(" "));
     line = [];
   };
   doc.items.forEach((it, i) => {
     if (it.k === "w") {
-      line.push(`[${fmtTime(it.s)}] ${it.w}`);
+      const word = `[${fmtTime(it.s)}] ${it.w}`;
+      const kind = marks?.get(it.id);
+      if (!kind) {
+        endRun();
+        line.push(word);
+        return;
+      }
+      if (run && run.kind !== kind) endRun();
+      run ??= { kind, words: [] };
+      run.words.push(word);
     } else if (it.k === "br") {
       flush();
     } else if (full && it.k === "note") {
@@ -115,6 +142,8 @@ export function exportTimed(doc: TimedDoc | null, meta: Record<string, ImageMeta
   flush();
   return out.join("\n").trim() + "\n";
 }
+
+const DISFLUENCY_TAG: Record<DisfluencyKind, string> = { filler: "dolgu", repeat: "tekrar", retake: "yarım/yeniden söylenen", manual: "işaretli" };
 
 /** Zamanlı belgede referanslanan resim yolları. */
 export function collectTimedPaths(doc: TimedDoc | null | undefined): Set<string> {

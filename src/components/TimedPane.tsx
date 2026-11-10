@@ -5,6 +5,7 @@ import { DEFAULT_SILENCE_SEC, acceptedRanges, buildCuts, cutWordIds } from "../l
 import { baseName, buildCues, toSrt, toVtt } from "../lib/subtitleExport";
 import { fmtTime, moveItem, newId, setWordText, splitLines } from "../lib/timed";
 import type { TimedDoc, TimedItem } from "../lib/types";
+import { DISFLUENCY_LABEL, disfluentWords, extraCuts, toggleDisfluent } from "../lib/disfluency";
 import { CutListPanel } from "./CutListPanel";
 
 interface Props {
@@ -64,7 +65,13 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
     return () => document.removeEventListener("mousedown", close);
   }, []);
   const silenceSec = doc.cuts?.silenceSec ?? DEFAULT_SILENCE_SEC;
-  const cuts = useMemo(() => (showCuts ? buildCuts(doc.items, silenceSec) : []), [showCuts, doc.items, silenceSec]);
+  // Gereksiz kelimeler (dolgu, tekrar, yarım cümle): yerel kurallar + AI + elle işaret. Metinde soluk gösterilir.
+  const dis = useMemo(() => disfluentWords(doc), [doc]);
+  const cuts = useMemo(() => {
+    if (!showCuts) return [];
+    const base = buildCuts(doc.items, silenceSec);
+    return [...base, ...extraCuts(doc, base)].sort((a, b) => a.start - b.start || a.end - b.end);
+  }, [showCuts, doc, silenceSec]);
   const cutIds = useMemo(
     () => (showCuts ? cutWordIds(doc.items, acceptedRanges(cuts, doc.cuts)) : new Set<string>()),
     [showCuts, cuts, doc.items, doc.cuts],
@@ -383,7 +390,15 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
           <span key={item.id} className="tw-wrap">
             <span
               id={"w-" + item.id}
-              className={"tw" + (sug !== undefined ? " sug" : "") + (cutIds.has(item.id) ? " cut" : "") + (isSel ? " sel" : "") + (isDrop ? " drop" : "")}
+              className={
+                "tw" +
+                (sug !== undefined ? " sug" : "") +
+                (dis.has(item.id) ? " dis" : "") +
+                (cutIds.has(item.id) ? " cut" : "") +
+                (isSel ? " sel" : "") +
+                (isDrop ? " drop" : "")
+              }
+              title={dis.has(item.id) ? `${DISFLUENCY_LABEL[dis.get(item.id)!]}: kopyalarken işaretlenir` : undefined}
               data-anchor={item.id}
               data-time={fmtTime(item.s, 1)}
               onClick={() => selectWord(item.id)}
@@ -563,6 +578,15 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
           <button onClick={() => addNote(selWord.id)} title="Bu kelimeden sonra not ekle">📝 Not</button>
           <button onClick={() => pickImageFor(selWord.id)} title="Bu kelimeden sonra bilgisayardan resim ekle">🖼 Resim</button>
           <button onClick={() => setEditWord(selWord.id)} title="Kelimeyi düzenle (çift tık)">✎ Düzenle</button>
+          {dis.has(selWord.id) ? (
+            <button onClick={() => onDoc(toggleDisfluent(docRef.current, selWord.id, false))} title="Bu kelime gereksiz değil; normal göster">
+              ◉ Gerekli
+            </button>
+          ) : (
+            <button onClick={() => onDoc(toggleDisfluent(docRef.current, selWord.id, true))} title="Dolgu/tekrar gibi gereksiz olarak işaretle (soluk gösterilir)">
+              ◌ Gereksiz
+            </button>
+          )}
         </div>
       )}
 

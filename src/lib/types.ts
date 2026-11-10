@@ -49,7 +49,14 @@ export interface TimedDoc {
   suggestions?: Record<string, string>;
   /** Kesim listesi tercihleri: sessizlik eşiği (sn) ve kullanıcının varsayılanı değiştirdiği öneri kimlikleri */
   cuts?: { silenceSec?: number; off?: string[]; on?: string[] };
+  /** AI'ın ya da kullanıcının gereksiz bulduğu kelimeler: kelime kimliği → tür (soluk gösterilir). */
+  disfluent?: Record<string, DisfluencyKind>;
+  /** Kullanıcının "gereksiz değil" dediği kelimeler (otomatik tespiti geçersiz kılar). */
+  keepWords?: string[];
 }
+
+/** Gereksiz kelime türü: dolgu (ıı, şey), tekrar (bu bu), yarım bırakılıp yeniden söylenen öbek, elle işaret. */
+export type DisfluencyKind = "filler" | "repeat" | "retake" | "manual";
 
 /** Kaynak metin hakkında AI ile sohbet mesajı. */
 export interface ChatMessage {

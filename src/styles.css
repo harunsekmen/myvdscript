@@ -760,3 +760,7 @@ button.stage-pill:hover { background: color-mix(in srgb, var(--c) 28%, transpare
 .chat-pending span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px 10px; }
 .chat-input textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; line-height: 1.45; }
+
+/* Zamanlı metin: gereksiz kelimeler (dolgu, tekrar, yarım cümle) soluk */
+.tw.dis { opacity: .38; font-style: italic; text-decoration: underline dotted #8a8fa3; text-underline-offset: 3px; }
+.tw.dis:hover, .tw.dis.sel { opacity: .8; }

@@ -234,11 +234,17 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
     }
     setChecking({ done: 0, total: 1 });
     try {
-      const fixes = await checkWords(doc, settings, (done, total) => alive.current && setChecking({ done, total }));
+      const { fixes, drops } = await checkWords(doc, settings, (done, total) => alive.current && setChecking({ done, total }));
       if (!alive.current) return;
       const n = Object.keys(fixes).length;
-      onPatchTimed((d) => ({ ...d, suggestions: { ...(d.suggestions ?? {}), ...fixes } }));
-      onToast(n ? `${n} kelime için öneri hazır; onaylayabilirsin` : "AI yanlış kelime bulmadı");
+      const m = Object.keys(drops).length;
+      // AI'ın gereksiz bulduğu kelimeler yenilenir; elle yapılan işaretler korunur.
+      onPatchTimed((d) => {
+        const manual = Object.fromEntries(Object.entries(d.disfluent ?? {}).filter(([, k]) => k === "manual"));
+        return { ...d, suggestions: { ...(d.suggestions ?? {}), ...fixes }, disfluent: { ...drops, ...manual } };
+      });
+      const parts = [n ? `${n} kelime için düzeltme önerisi` : "", m ? `${m} gereksiz kelime soluk gösterildi` : ""].filter(Boolean);
+      onToast(parts.length ? `AI: ${parts.join(", ")}` : "AI yanlış ya da gereksiz kelime bulmadı");
     } catch (e) {
       if (alive.current) onToast(`AI kelime kontrolü başarısız: ${e}`, "error");
     } finally {
@@ -308,7 +314,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
             className="btn small"
             onClick={() => project.timed && runCheck(project.timed)}
             disabled={!!checking || !!busy}
-            title="Zamanlı metni AI'a gönder; yanlış kelimeler için öneri al"
+            title="Zamanlı metni AI'a gönder; yanlış kelimeler için öneri al, dolgu ve tekrarları işaretle"
           >
             ✦ AI ile kontrol et
           </button>

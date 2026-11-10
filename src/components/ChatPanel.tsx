@@ -33,7 +33,27 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickRef = useRef(true);
 
-  useEffect(() => () => runRef.current?.cancel(), []);
+  // Panel kapanır ya da kaynak değişirse akış durur; o ana kadar gelen yanıt kaybolmasın diye kaydedilir.
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const modelRef = useRef(model || fallback);
+  modelRef.current = model || fallback;
+  useEffect(
+    () => () => {
+      if (!runRef.current) return;
+      runRef.current.cancel();
+      const partial = liveRef.current && !liveRef.current.error ? liveRef.current.text.trim() : "";
+      if (partial) {
+        onChangeRef.current([
+          ...msgsRef.current,
+          { id: crypto.randomUUID(), role: "assistant", text: partial + " …", model: modelRef.current, createdAt: Date.now() },
+        ]);
+      }
+    },
+    [],
+  );
   useEffect(() => {
     if (quote) inputRef.current?.focus();
   }, [quote]);

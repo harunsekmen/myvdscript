@@ -80,16 +80,24 @@ export const CUSTOM_PROMPT_PLACEHOLDER = "Örn: Bu metni daha kısa ve akıcı b
 
 export const WORD_CHECK_PROMPT =`Sen bir transkript düzeltme asistanısın. Sana konuşma tanıma (ASR) ile üretilmiş, kelime kelime zamanlı bir metin verilecek. Her satır şu biçimdedir: \`numara [dakika:saniye.salise] kelime\`. Zaman, o kelimenin konuşulduğu andır; bağlamı anlamak için kullan. Metnin dilini kendin algıla.
 
-Görevin: YALNIZCA açıkça yanlış duyulmuş, yazım hatası içeren ya da bağlama hiç uymayan kelimeleri bulmak ve doğru halini önermek.
+İki görevin var:
 
-Kurallar:
+1) DÜZELTME (fixes): YALNIZCA açıkça yanlış duyulmuş, yazım hatası içeren ya da bağlama hiç uymayan kelimeleri bulup doğru halini öner.
 - Emin olmadığın kelimeye dokunma. Konuşmacının gerçekten söylediğini tahmin et, süsleme yapma.
 - Noktalama, büyük/küçük harf ve üslup düzeltmesi önerme; yalnızca kelime hatalarını düzelt.
 - Her öneri tek bir kelime olsun (gerekirse en fazla üç kelimelik kısa bir ifade).
 - Kelime ekleme, silme ya da yeniden sıralama önerme.
-- Yanıtı YALNIZCA şu JSON biçiminde ver, başka hiçbir şey yazma:
-{"fixes":[{"n":12,"to":"doğru kelime"}]}
-Hiç düzeltme gerekmiyorsa: {"fixes":[]}`;
+
+2) GEREKSİZ KELİMELER (drop): Video kurgusunda kesilebilecek, anlatıma bilgi katmayan kelimeleri işaretle. Türler:
+- "filler": dolgu sesleri ve dolgu kelimeleri (ıı, ee, hmm, şey, yani, işte, hani, falan, like, um gibi); yalnızca gerçekten dolgu olarak kullanıldığında. "Bu şeyi aldım" gibi anlam taşıyan kullanımı işaretleme.
+- "repeat": art arda gereksizce tekrarlanan kelime ya da kısa öbek ("bu bu", "ben ben"); tekrarın ÖNCEKİ kısmını işaretle, sonuncusu kalsın.
+- "retake": konuşmacının yarım bırakıp baştan yeniden söylediği cümle/öbek; yarım kalan İLK denemeyi işaretle, düzgün söylenen son hali kalsın.
+- Emin değilsen işaretleme. Anlam taşıyan hiçbir kelimeyi işaretleme.
+- Tek kelime için {"n":5,"t":"filler"}, ardışık kelimeler için {"from":30,"to":36,"t":"retake"} kullan.
+
+Yanıtı YALNIZCA şu JSON biçiminde ver, başka hiçbir şey yazma:
+{"fixes":[{"n":12,"to":"doğru kelime"}],"drop":[{"n":5,"t":"filler"},{"from":30,"to":36,"t":"retake"}]}
+Bulgu yoksa ilgili listeyi boş bırak: {"fixes":[],"drop":[]}`;
 
 export function buildInsightMessage(selected: string, context: string): string {
   return `Seçilen ifade:\n"${selected}"\n\nÇevresindeki metin (bağlam):\n${context}\n\nYalnızca seçilen ifadenin ne olduğunu kısaca (en fazla 2-4 cümle) açıkla.`;

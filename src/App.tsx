@@ -20,6 +20,7 @@ import { fontCss } from "./lib/fonts";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
 import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
+import { disfluentWords } from "./lib/disfluency";
 import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
 import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
@@ -249,7 +250,7 @@ export default function App() {
       if (!p) return toast("Kopyalanacak proje yok", "error");
       const timedActive = tab === "timed" && !!p.timed;
       const text = timedActive
-        ? exportTimed(p.timed ?? null, p.imageMeta, mode)
+        ? exportTimed(p.timed ?? null, p.imageMeta, mode, disfluentWords(p.timed))
         : exportDoc(getDocRef.current() ?? p.editorDoc, p.imageMeta, mode);
       if (!text.trim()) return toast(timedActive ? "Zamanlı metin boş" : "Senaryo boş", "error");
       try {
