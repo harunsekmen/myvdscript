@@ -44,6 +44,8 @@ let pending: { from: number; to?: number } | null = null;
 // Cümle sonunda kendimiz duraklatırız (YouTube'un endSeconds'ı "bitti" ekranını açıyor).
 let stopAt: number | null = null;
 let listening = false;
+// Oynatıcıda video bir kez başlatıldıysa devam ettirmek yeniden yükleme gerektirmez.
+let started = false;
 
 function set(p: Partial<VideoState>) {
   st = { ...st, ...p };
@@ -63,6 +65,7 @@ const handshake = () => send({ event: "listening", id: 1, channel: "widget" });
 function load(from: number, to?: number) {
   if (!st.videoId) return;
   stopAt = to ?? null;
+  started = true;
   command("loadVideoById", [{ videoId: st.videoId, startSeconds: Math.max(0, from) }]);
 }
 
@@ -104,6 +107,7 @@ export function attachFrame(f: HTMLIFrameElement, videoId: string): () => void {
   frame = f;
   pending = null;
   stopAt = null;
+  started = false;
   set({ ...IDLE, videoId, volume: savedVol(), muted: localStorage.getItem(MUTE_KEY) === "1" });
   if (!listening) {
     window.addEventListener("message", onMessage);
@@ -127,6 +131,14 @@ export function playAt(from: number, to?: number | null) {
   if (!frame || !st.videoId) throw new Error("Video paneli yok");
   if (st.ready) load(from, to ?? undefined);
   else pending = { from, to: to ?? undefined };
+}
+
+/** Duraklatılan videoyu kaldığı yerden sürdürür (yeniden yüklemeden); hiç başlamadıysa yükler. */
+export function resumeVideo() {
+  if (!frame || !st.videoId) throw new Error("Video paneli yok");
+  if (!st.ready || !started) return playAt(st.time);
+  stopAt = null;
+  command("playVideo");
 }
 
 export function pauseVideo() {

@@ -4,7 +4,7 @@ import { api, streamChat } from "../lib/api";
 import { buildChapterMessage, CHAPTER_PROMPT, parseChapterTitles, sameTitles } from "../lib/chapters";
 import { translatedSentenceAt } from "../lib/segmentParser";
 import type { Segment, Settings } from "../lib/types";
-import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
+import { attachFrame, getVideoState, pauseVideo, playAt, resumeVideo, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
 
 interface Meta {
@@ -247,7 +247,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const toggle = () => {
     if (vs.playing) return pauseVideo();
     try {
-      playAt(time);
+      resumeVideo();
     } catch (e: any) {
       onToast(`Video oynatılamadı: ${e?.message ?? e}`, "error");
     }
