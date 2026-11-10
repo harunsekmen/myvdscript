@@ -775,3 +775,11 @@ button.stage-pill:hover { background: color-mix(in srgb, var(--c) 28%, transpare
 /* Zamanlı metin: gereksiz kelimeler (dolgu, tekrar, yarım cümle) soluk */
 .tw.dis { opacity: .38; font-style: italic; text-decoration: underline dotted #8a8fa3; text-underline-offset: 3px; }
 .tw.dis:hover, .tw.dis.sel { opacity: .8; }
+
+/* Pano: sıradaki kart ve "＋ Aşama ekle" sütunu */
+.kcard.queued { border-color: #f5b84b66; }
+.kbadge.queued { left: 6px; top: 6px; background: #f5b84bdd; color: #1a1c24; }
+.kcol-add { flex: 0 0 200px; align-self: flex-start; height: 44px; border: 1px dashed #2e3344; border-radius: 14px; background: none; color: var(--muted); font-size: 13px; cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
+.kcol-add:hover { border-color: var(--accent); color: var(--text); background: #6c8cff0d; }
+.kcol-add.editing { display: flex; align-items: center; padding: 0 6px; cursor: default; border-style: solid; border-color: var(--accent); }
+.kcol-add.editing .input { padding: 6px 8px; }

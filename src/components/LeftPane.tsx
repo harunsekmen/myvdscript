@@ -20,6 +20,9 @@ interface Props {
   settings: Settings;
   models: string[];
   proc: ProcState;
+  /** Bu kaynak, başka bir işlem bitince işlenmek üzere sırada mı? */
+  queued: boolean;
+  onDequeue: () => void;
   onInsights: (sourceId: string, insights: Insight[]) => void;
   onChat: (sourceId: string, chat: ChatMessage[]) => void;
   onReprocess: () => void;
@@ -148,6 +151,8 @@ export function LeftPane({
   settings,
   models,
   proc,
+  queued,
+  onDequeue,
   onInsights,
   onChat,
   onReprocess,
@@ -498,6 +503,11 @@ export function LeftPane({
             </span>
             <button className="btn small" onClick={onCancel}>İptal</button>
           </>
+        ) : queued ? (
+          <>
+            <span className="muted">Sırada: önceki işlem bitince başlayacak</span>
+            <button className="btn small" onClick={onDequeue}>Sıradan çıkar</button>
+          </>
         ) : busyElsewhere ? (
           <span className="muted">Başka bir kaynak işleniyor…</span>
         ) : (
@@ -651,7 +661,7 @@ export function LeftPane({
           }}
         >
           <div className="reader-col">
-            {segments.length === 0 && !busyHere && (
+            {segments.length === 0 && !busyHere && !queued && (
               <div className="empty start-empty">
                 <p className="start-title">Henüz kaynak metin yok</p>
                 <p className="muted">Bir YouTube bağlantısı yapıştırın; altyazı çekilip Türkçe'ye düzenlenecek.</p>

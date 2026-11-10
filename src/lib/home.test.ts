@@ -90,7 +90,7 @@ describe("izlenme farkı", () => {
 describe("aşama", () => {
   it("tahmin", () => {
     expect(inferStage({ sources: [] })).toBe("idea");
-    expect(inferStage({ sources: [{ transcriptRaw: "x", segments: [] }] })).toBe("subs");
+    expect(inferStage({ sources: [{ transcriptRaw: "x", segments: [] }] })).toBe("idea");
     expect(inferStage({ sources: [{ transcriptRaw: "x", segments: [{}] }] })).toBe("processed");
     expect(inferStage({ editorDoc: { type: "doc", content: [{ type: "paragraph" }] }, sources: [] })).toBe("idea");
     expect(
@@ -98,8 +98,10 @@ describe("aşama", () => {
     ).toBe("writing");
   });
   it("otomatik aşama yalnızca ileri taşır", () => {
-    expect(advanceStage(DEFAULT_STAGES, "idea", "subs")).toBe("subs");
-    expect(advanceStage(DEFAULT_STAGES, undefined, "subs")).toBe("subs");
+    expect(advanceStage(DEFAULT_STAGES, "idea", "processed")).toBe("processed");
+    expect(advanceStage(DEFAULT_STAGES, undefined, "processed")).toBe("processed");
+    // Kaldırılan eski aşamadaki proje de ilerletilebilir.
+    expect(advanceStage(DEFAULT_STAGES, "subs", "processed")).toBe("processed");
     expect(advanceStage(DEFAULT_STAGES, "writing", "processed")).toBeNull();
     expect(advanceStage(DEFAULT_STAGES, "processed", "processed")).toBeNull();
     expect(advanceStage(DEFAULT_STAGES, "idea", "yok")).toBeNull();
@@ -126,5 +128,19 @@ describe("filtre ve sıralama", () => {
   it("izlenmeye göre", () => expect(run({ sort: "views" })).toEqual(["c", "a", "b"]));
   it("sayım arşivi saymaz", () => {
     expect(countByStage([a, b, meta({ id: "z", archived: true })], DEFAULT_STAGES)).toEqual({ filmed: 1, idea: 1 });
+  });
+});
+
+describe("varsayılan aşamalar", () => {
+  it("altı aşama: Fikir → Yayınlandı", async () => {
+    const { DEFAULT_STAGES: d } = await import("./settingsDefaults");
+    expect(d.map((s) => s.label)).toEqual(["Fikir", "İşlendi", "Script yazılıyor", "Script hazır", "Çekildi", "Yayınlandı"]);
+  });
+  it("eski 'Altyazı alındı' aşaması yalnız adı değişmemişse kaldırılır", async () => {
+    const { migrateStages } = await import("./settingsDefaults");
+    const old = [{ id: "idea", label: "Fikir", color: "" }, { id: "subs", label: "Altyazı alındı", color: "" }, { id: "x", label: "Kendi", color: "" }];
+    expect(migrateStages(old).map((s) => s.id)).toEqual(["idea", "x"]);
+    const renamed = [{ id: "subs", label: "Altyazı", color: "" }];
+    expect(migrateStages(renamed)).toEqual(renamed);
   });
 });

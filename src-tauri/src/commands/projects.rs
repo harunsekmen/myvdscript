@@ -34,9 +34,6 @@ fn infer_stage(v: &Value) -> &'static str {
     if has("segments", &|x| x.as_array().map(|a| !a.is_empty()).unwrap_or(false)) {
         return "processed";
     }
-    if has("transcriptRaw", &|x| x.as_str().map(|t| !t.is_empty()).unwrap_or(false)) {
-        return "subs";
-    }
     "idea"
 }
 
@@ -287,7 +284,7 @@ mod tests {
         let w = json!({"id":"a","stage":"filmed","editorDoc":{"type":"doc","content":[{"type":"text","text":"x"}]},"sources":[]});
         assert_eq!(meta_of(&w)["stage"], "filmed");
         let w = json!({"id":"a","editorDoc":{"type":"doc","content":[{"type":"paragraph"}]},"sources":[{"transcriptRaw":"x"}]});
-        assert_eq!(meta_of(&w)["stage"], "subs");
+        assert_eq!(meta_of(&w)["stage"], "idea");
         let w = json!({"id":"a","editorDoc":{"type":"doc","content":[{"type":"text","text":"yaz"}]}});
         assert_eq!(meta_of(&w)["stage"], "writing");
     }

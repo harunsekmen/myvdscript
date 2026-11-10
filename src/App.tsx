@@ -17,6 +17,7 @@ import { api, type ProjectPatch } from "./lib/api";
 import { createAutosaver } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
+import { migrateStages } from "./lib/settingsDefaults";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
 import { activeSource, patchSource, removeSource, sourceLabel, subtitleLang } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
@@ -73,11 +74,11 @@ export default function App() {
     [settingsSaver],
   );
 
-  // Proje durumu ile işleme hattı birbirine bağlıdır (proje değişince işlem iptal edilir); kanca ref ile kurulur.
+  // Proje durumu ile işleme hattı birbirine bağlıdır (proje silinince işlemi durur); kanca ref ile kurulur.
   const lifecycle = useRef<PipelineLifecycle>({ cancel: () => {}, reset: () => {} });
-  const { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, deleteById, editProject, clearAll } =
+  const { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, deleteById, editProject, clearAll } =
     useProjectStore({ patchSettings, lifecycle });
-  const pipe = usePipeline({ projectRef, mutate, settingsRef, toast, openSettings: () => setShowSettings(true) });
+  const pipe = usePipeline({ projectRef, mutate, updateProject, settingsRef, toast, openSettings: () => setShowSettings(true) });
   const videoStats = useVideoStats(projects, ready);
   // Eski sürümlerde bozuk kaydedilmiş başlıklar (�) videonun güncel başlığıyla bir kez onarılır.
   useEffect(() => {
@@ -109,6 +110,7 @@ export default function App() {
       const loaded = await api.loadSettings();
       const s: Settings = { ...DEFAULTS, ...loaded };
       if (!Array.isArray(s.stages) || !s.stages.length) s.stages = DEFAULTS.stages;
+      else s.stages = migrateStages(s.stages);
       if (!Array.isArray(s.defaultChecklist)) s.defaultChecklist = DEFAULTS.defaultChecklist;
       if (!s.systemPrompt.trim() || isLegacySystemPrompt(s.systemPrompt)) s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       if (!s.insightPrompt.trim() || isLegacyInsightPrompt(s.insightPrompt)) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
@@ -172,9 +174,15 @@ export default function App() {
   const startFromLink = async (url: string) => {
     setDialog(null);
     try {
+      // Başka bir işlem sürüyorsa yeni proje açılmadan oluşturulur ve sıraya alınır (çalışan iş kesilmez).
+      if (pipe.proc.running || pipe.queue.length) {
+        const p = await createProject("Yükleniyor…", url, newProjectExtra(), false);
+        pipe.fetchForSource(p.sources[0].id, url, undefined, p.id);
+        return;
+      }
       const p = await createProject("Yükleniyor…", url, newProjectExtra());
       setView("project");
-      await pipe.fetchForSource(p.sources[0].id, url);
+      pipe.fetchForSource(p.sources[0].id, url, undefined, p.id);
     } catch (e) {
       toast(`${e}`, "error");
     }
@@ -366,6 +374,8 @@ export default function App() {
               settings={settings}
               models={models}
               proc={pipe.proc}
+              queued={pipe.queue.some((j) => j.sourceId === source.id)}
+              onDequeue={() => pipe.dequeue(source.id)}
               onInsights={onInsights}
               onChat={onChat}
               onReprocess={pipe.reprocess}
@@ -423,7 +433,8 @@ export default function App() {
         <HomePage
           projects={projects}
           settings={settings}
-          runningId={pipe.proc.running ? project?.id ?? null : null}
+          runningId={pipe.proc.running ? pipe.proc.projectId : null}
+          queuedIds={pipe.queue.map((j) => j.projectId)}
           videoStats={videoStats}
           onOpen={openFromHome}
           onNewFromLink={() => setDialog({ kind: "link" })}

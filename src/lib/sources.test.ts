@@ -45,7 +45,7 @@ describe("proje geçişi (eski -> kaynaklı)", () => {
 
   it("aşama yoksa içerikten tahmin edilir, varsa korunur", () => {
     expect(migrateProject(legacy).stage).toBe("processed");
-    expect(migrateProject({ ...legacy, segments: [] }).stage).toBe("subs");
+    expect(migrateProject({ ...legacy, segments: [] }).stage).toBe("idea");
     expect(migrateProject({ ...legacy, segments: [], transcriptRaw: "" }).stage).toBe("idea");
     expect(migrateProject({ ...legacy, stage: "filmed" }).stage).toBe("filmed");
   });

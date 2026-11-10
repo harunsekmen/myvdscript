@@ -94,7 +94,6 @@ export function inferStage(p: {
   if (docHasContent(p.editorDoc)) return "writing";
   const src = p.sources ?? [];
   if (src.some((s) => (s.segments?.length ?? 0) > 0)) return "processed";
-  if (src.some((s) => !!s.transcriptRaw)) return "subs";
   return "idea";
 }
 

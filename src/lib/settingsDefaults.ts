@@ -1,16 +1,24 @@
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT } from "./prompts";
 import type { Settings, StageDef } from "./types";
 
-/** Varsayılan aşamalar; ilk dördünün kimlikleri otomatik aşama ve tahmin kuralları tarafından kullanılır. */
+/** Varsayılan aşamalar; "idea", "processed" ve "writing" kimlikleri otomatik aşama ve tahmin kuralları tarafından kullanılır. */
 export const DEFAULT_STAGES: StageDef[] = [
   { id: "idea", label: "Fikir", color: "#8a8fa3" },
-  { id: "subs", label: "Altyazı alındı", color: "#6c8cff" },
   { id: "processed", label: "İşlendi", color: "#a78bfa" },
   { id: "writing", label: "Script yazılıyor", color: "#f5b84b" },
   { id: "ready", label: "Script hazır", color: "#4fd1a5" },
   { id: "filmed", label: "Çekildi", color: "#f0883e" },
   { id: "published", label: "Yayınlandı", color: "#ef7a8c" },
 ];
+
+/**
+ * Eski varsayılandaki "Altyazı alındı" aşaması kaldırıldı (altyazı alınınca hemen işlenir).
+ * Kullanıcı adını değiştirmediyse listeden çıkarılır; o aşamadaki projeler ilk aşamada görünür.
+ */
+export function migrateStages(stages: StageDef[]): StageDef[] {
+  const next = stages.filter((s) => !(s.id === "subs" && s.label === "Altyazı alındı"));
+  return next.length ? next : DEFAULT_STAGES;
+}
 
 /** Uygulamanın varsayılan ayarları (ilk açılış ve "varsayılana dön" düğmeleri). */
 export const DEFAULT_SETTINGS: Settings = {

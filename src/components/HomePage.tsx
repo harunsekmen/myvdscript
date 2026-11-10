@@ -19,6 +19,8 @@ interface Props {
   settings: Settings;
   /** Arka planda işlenen projenin kimliği (kartta "İşleniyor…" gösterilir). */
   runningId: string | null;
+  /** Sırada bekleyen projeler (sıra düzeninde). */
+  queuedIds: string[];
   videoStats: ReturnType<typeof useVideoStats>;
   onOpen: (id: string) => void;
   onNewFromLink: () => void;
@@ -116,11 +118,54 @@ function PopBox({ x, y, width, className, children }: { x: number; y: number; wi
   );
 }
 
+const STAGE_COLORS = ["#6c8cff", "#a78bfa", "#f5b84b", "#4fd1a5", "#f0883e", "#ef7a8c", "#5ec8e5", "#c792ea"];
+
+/** Kullanıcının panoya eklediği yeni aşama (kalıcı; Ayarlar > Ana sayfa'dan düzenlenir/silinir). */
+const newStage = (label: string, i: number) => ({ id: crypto.randomUUID().slice(0, 8), label, color: STAGE_COLORS[i % STAGE_COLORS.length] });
+
+/** Panonun sonunda "＋ Aşama ekle" sütunu: tıklayınca ad girilir. */
+function AddStageColumn({ onAdd }: { onAdd: (label: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+  const done = (save: boolean) => {
+    const label = val.trim();
+    if (save && label) onAdd(label);
+    setVal("");
+    setEditing(false);
+  };
+  if (!editing) {
+    return (
+      <button className="kcol-add" onClick={() => setEditing(true)} title="Panoya yeni bir aşama sütunu ekle (Ayarlar > Ana sayfa'dan düzenlenebilir)">
+        ＋ Aşama ekle
+      </button>
+    );
+  }
+  return (
+    <div className="kcol-add editing">
+      <input
+        className="input"
+        autoFocus
+        placeholder="Aşama adı"
+        value={val}
+        maxLength={40}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") done(true);
+          if (e.key === "Escape") done(false);
+        }}
+        onBlur={() => done(true)}
+      />
+    </div>
+  );
+}
+
 interface CardProps {
   meta: ProjectMeta;
   ps: ProjectStats;
   loading: boolean;
   running: boolean;
+  /** Sıradaki konumu (1'den başlar); sırada değilse 0. */
+  queuePos: number;
   last: boolean;
   dragging: boolean;
   onOpen: () => void;
@@ -131,7 +176,7 @@ interface CardProps {
   onDragEnd: () => void;
 }
 
-function KanbanCard({ meta, ps, loading, running, last, dragging, onOpen, onMenu, onPanel, onPin, onDragStart, onDragEnd }: CardProps) {
+function KanbanCard({ meta, ps, loading, running, queuePos, last, dragging, onOpen, onMenu, onPanel, onPin, onDragStart, onDragEnd }: CardProps) {
   const first = ps.videos.find((v) => v.id) ?? null;
   const multi = ps.videos.length > 1;
   const st = first?.stat;
@@ -150,7 +195,7 @@ function KanbanCard({ meta, ps, loading, running, last, dragging, onOpen, onMenu
 
   return (
     <div
-      className={"kcard" + (running ? " running" : "") + (dragging ? " dragging" : "") + (meta.pinned ? " pinned" : "") + (meta.archived ? " archived" : "")}
+      className={"kcard" + (running ? " running" : queuePos ? " queued" : "") + (dragging ? " dragging" : "") + (meta.pinned ? " pinned" : "") + (meta.archived ? " archived" : "")}
       role="button"
       tabIndex={0}
       draggable
@@ -173,7 +218,8 @@ function KanbanCard({ meta, ps, loading, running, last, dragging, onOpen, onMenu
           {(st?.duration ?? 0) > 0 && !multi && <span className="kbadge dur">{formatDuration(st!.duration)}</span>}
           {multi && <span className="kbadge count">▤ {ps.videos.length} video</span>}
           {running && <span className="kbadge run">İşleniyor…</span>}
-          {!running && last && <span className="kbadge last">Son açılan</span>}
+          {!running && queuePos > 0 && <span className="kbadge queued">Sırada · {queuePos}</span>}
+          {!running && !queuePos && last && <span className="kbadge last">Son açılan</span>}
           {multi && (
             <div className="khover">
               {ps.videos.map((v, i) => (
@@ -254,7 +300,7 @@ function KanbanCard({ meta, ps, loading, running, last, dragging, onOpen, onMenu
   );
 }
 
-export function HomePage({ projects, settings, runningId, videoStats, onOpen, onNewFromLink, onNewBlank, onEdit, onRename, onDelete, onSettings, focusSignal }: Props) {
+export function HomePage({ projects, settings, runningId, queuedIds, videoStats, onOpen, onNewFromLink, onNewBlank, onEdit, onRename, onDelete, onSettings, focusSignal }: Props) {
   useTick(30000);
   const { stats, progress, lastUpdated, failed, error, refresh, cacheLoaded } = videoStats;
   const [query, setQuery] = useState("");
@@ -324,6 +370,7 @@ export function HomePage({ projects, settings, runningId, videoStats, onOpen, on
       ps={projectStats(m, stats)}
       loading={pending || !cacheLoaded}
       running={runningId === m.id}
+      queuePos={queuedIds.indexOf(m.id) + 1}
       last={m.id === settings.lastProjectId}
       dragging={dragId === m.id}
       onOpen={() => onOpen(m.id)}
@@ -469,6 +516,7 @@ export function HomePage({ projects, settings, runningId, videoStats, onOpen, on
             </section>
           );
         })}
+        {!dragId && <AddStageColumn onAdd={(label) => onSettings({ stages: [...stages, newStage(label, stages.length)] })} />}
         {(showArchive || dragId) && archivedTotal + (dragId ? 1 : 0) > 0 && (
           <section className={"kcol archive" + (dropCol === ARCHIVE ? " drop" : "")} style={{ "--c": "#6b7085" } as CSSProperties} {...colProps(ARCHIVE)}>
             <header className="kcol-head">

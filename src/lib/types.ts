@@ -133,6 +133,8 @@ export interface ProcState {
   live: Segment[] | null;
   /** İşlemin ait olduğu kaynak (sekme değişse de sonuç buraya yazılır). */
   sourceId: string | null;
+  /** İşlemin ait olduğu proje (proje değişse de arka planda sürer). */
+  projectId: string | null;
   /** Hata sonrası kaldığı yerden devam edilebilir mi? */
   resumable: boolean;
 }

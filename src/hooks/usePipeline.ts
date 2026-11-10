@@ -7,13 +7,22 @@ import { segmentsToMarkdown } from "../lib/segmentParser";
 import { activeSource, addSource, applyProcessed, makeSource, NEW_TITLES, patchSource, restoreHistory } from "../lib/sources";
 import type { Project, ProcState, Segment, Settings } from "../lib/types";
 
-export const IDLE: ProcState = { running: false, phase: null, progress: null, error: null, live: null, sourceId: null, resumable: false };
+export const IDLE: ProcState = { running: false, phase: null, progress: null, error: null, live: null, sourceId: null, projectId: null, resumable: false };
 
 /** Seçim bekleyen altyazı listesi (hangi kaynak için istendiği ile birlikte). */
 export interface SubPick {
+  projectId: string;
   sourceId: string;
   url: string;
   list: SubtitleList;
+}
+
+/** Sırada bekleyen "altyazıyı çek ve işle" işi. */
+export interface QueuedJob {
+  projectId: string;
+  sourceId: string;
+  url: string;
+  title?: string;
 }
 
 interface Resumable {
@@ -28,49 +37,74 @@ interface Resumable {
 interface Opts {
   projectRef: MutableRefObject<Project | null>;
   mutate: (fn: (p: Project) => Project, render?: boolean) => void;
+  /** Açık olsun olmasın bir projeyi günceller (açık değilse diskte). */
+  updateProject: (id: string, fn: (p: Project) => Project) => Promise<void>;
   settingsRef: MutableRefObject<Settings>;
   toast: (msg: string, kind?: "error" | "info") => void;
   openSettings: () => void;
 }
 
 /**
- * Altyazı çekme ve AI ile işleme hattı. Her işlem başladığı projeye ve kaynağa yazar;
- * kullanıcı sekme/proje değiştirse de sonuç yanlış yere gitmez. Aynı anda tek işlem çalışır.
+ * Altyazı çekme ve AI ile işleme hattı. Her işlem başladığı projeye ve kaynağa yazar; kullanıcı
+ * başka projeye geçse ya da ana sayfaya dönse de arka planda sürer. Aynı anda tek işlem çalışır;
+ * meşgulken başlatılan bağlantılar sıraya alınır ve sırayla işlenir.
  */
-export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettings }: Opts) {
+export function usePipeline({ projectRef, mutate, updateProject, settingsRef, toast, openSettings }: Opts) {
   const [proc, setProc] = useState<ProcState>(IDLE);
   const procRef = useRef(proc);
   procRef.current = proc;
   const [subPick, setSubPick] = useState<SubPick | null>(null);
+  const [queue, setQueue] = useState<QueuedJob[]>([]);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
   const runRef = useRef<PipelineRun | null>(null);
   const resumeRef = useRef<Resumable | null>(null);
   /** İptal edilemeyen bekleyen işlemler (altyazı çekme/liste) için jeton: değişirse sonuç yok sayılır. */
   const opRef = useRef(0);
 
-  /** Otomatik aşama (ayar açıksa): proje hâlâ açıksa aşamayı yalnızca ileri taşır. */
+  const setQ = (q: QueuedJob[]) => {
+    queueRef.current = q;
+    setQueue(q);
+  };
+
+  /** Otomatik aşama (ayar açıksa): aşamayı yalnızca ileri taşır; proje açık olmasa da. */
   const bumpStage = useCallback(
-    (pid: string | undefined, target: string) => {
+    (pid: string, target: string) => {
       const st = settingsRef.current;
-      if (!st.autoStage || !pid || projectRef.current?.id !== pid) return;
-      mutate((p) => {
+      if (!st.autoStage) return;
+      void updateProject(pid, (p) => {
         const to = advanceStage(st.stages, p.stage, target);
         return to ? { ...p, stage: to } : p;
-      });
+      }).catch(() => {});
     },
-    [projectRef, mutate, settingsRef],
+    [updateProject, settingsRef],
   );
 
-  /** Proje değişimi/silme için: çalışan her şeyi geçersiz kıl. */
-  const cancelRun = useCallback(() => {
+  /** Kaynak (açık projede) silindiyse sonuç yazılmaz. Açık olmayan projede patchSource zaten yok sayar. */
+  const sourceGone = useCallback(
+    (pid: string, sourceId: string) => {
+      const p = projectRef.current;
+      return !!p && p.id === pid && !p.sources.some((x) => x.id === sourceId);
+    },
+    [projectRef],
+  );
+
+  /** Proje silme/temizleme için: o projenin (ya da hepsinin) çalışan ve sıradaki işlerini durdur. */
+  const cancelRun = useCallback((projectId?: string) => {
+    setQ(projectId ? queueRef.current.filter((j) => j.projectId !== projectId) : []);
+    const cur = procRef.current;
+    if (projectId && cur.projectId !== projectId) return;
     opRef.current++;
     runRef.current?.cancel();
     runRef.current = null;
     resumeRef.current = null;
+    if (cur.running) setProc(IDLE);
   }, []);
 
+  /** Proje açılınca: başka projenin hata/seçici durumu temizlenir, çalışan işlem sürer. */
   const reset = useCallback(() => {
     setSubPick(null);
-    setProc(IDLE);
+    setProc((p) => (p.running ? p : IDLE));
   }, []);
 
   /** Kullanıcı İptal'e bastı. AI çalışıyorsa kısmi sonuç tutulur; altyazı aşamasında sonuç yok sayılır. */
@@ -83,21 +117,19 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
   }, []);
 
   const run = useCallback(
-    async (sourceId: string, text: string, o: { label: string; customPrompt?: string; resume?: Resumable }) => {
-      const pid = projectRef.current?.id;
-      if (!pid) return;
+    async (pid: string, sourceId: string, text: string, o: { label: string; customPrompt?: string; resume?: Resumable }) => {
       let s: Settings = settingsRef.current;
       if (!o.resume) {
         // Özel istem: temel sistem istemi korunur, kullanıcının istemi ek talimat olarak eklenir.
         if (o.customPrompt) s = { ...s, systemPrompt: buildCustomRunSystemPrompt(s.systemPrompt, o.customPrompt) };
         if (!s.model) {
-          setProc({ ...IDLE, sourceId, error: "Önce Ayarlar'dan bir model seçin." });
+          setProc({ ...IDLE, sourceId, projectId: pid, error: "Önce Ayarlar'dan bir model seçin." });
           openSettings();
           return;
         }
       }
       resumeRef.current = null;
-      setProc({ running: true, phase: "ai", progress: { done: 0, total: 1 }, error: null, live: [], sourceId, resumable: false });
+      setProc({ running: true, phase: "ai", progress: { done: 0, total: 1 }, error: null, live: [], sourceId, projectId: pid, resumable: false });
       const pipeline = processTranscript(
         text,
         s,
@@ -107,27 +139,26 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
       );
       runRef.current = pipeline;
       let historyPushed = o.resume?.historyPushed ?? false;
-      // Proje değiştiyse ya da kaynak silindiyse sonuç yazılmaz.
-      const gone = () => projectRef.current?.id !== pid || !projectRef.current.sources.some((x) => x.id === sourceId);
       try {
         const segs = await pipeline.promise;
-        if (gone()) return;
-        mutate((p) => patchSource(p, sourceId, (src) => applyProcessed(src, segs, o.label, Date.now(), historyPushed)));
+        if (sourceGone(pid, sourceId)) return setProc(IDLE);
+        await updateProject(pid, (p) => patchSource(p, sourceId, (src) => applyProcessed(src, segs, o.label, Date.now(), historyPushed)));
         bumpStage(pid, "processed");
         setProc(IDLE);
       } catch (e: any) {
-        if (gone()) return;
+        if (sourceGone(pid, sourceId)) return setProc(IDLE);
         const pe = e instanceof PipelineError ? e : null;
         const partial = pe?.partial ?? [];
         if (partial.length) {
           const keep = historyPushed;
-          mutate((p) => patchSource(p, sourceId, (src) => applyProcessed(src, partial, o.label, Date.now(), keep)));
+          await updateProject(pid, (p) => patchSource(p, sourceId, (src) => applyProcessed(src, partial, o.label, Date.now(), keep))).catch(() => {});
           historyPushed = true;
         }
         if (pe) resumeRef.current = { projectId: pid, sourceId, label: o.label, state: pe.resume, historyPushed };
         setProc({
           ...IDLE,
           sourceId,
+          projectId: pid,
           resumable: !!pe,
           error: pe?.cancelled ? "İşlem iptal edildi — kısmi sonuç tutuldu." : `AI hatası: ${e?.message ?? e}`,
         });
@@ -135,68 +166,104 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
         if (runRef.current === pipeline) runRef.current = null;
       }
     },
-    [projectRef, mutate, settingsRef, openSettings, bumpStage],
+    [settingsRef, openSettings, bumpStage, updateProject, sourceGone],
+  );
+
+  /** Açık projenin etkin kaynağı için AI işlemesi. */
+  const runActive = useCallback(
+    (sourceId: string, text: string, o: { label: string; customPrompt?: string; resume?: Resumable }) => {
+      const pid = projectRef.current?.id;
+      if (pid) void run(pid, sourceId, text, o);
+    },
+    [projectRef, run],
   );
 
   /** Hata/iptal sonrası kaldığı parçadan devam eder. */
   const resume = useCallback(() => {
     const r = resumeRef.current;
     if (!r || r.projectId !== projectRef.current?.id) return;
-    void run(r.sourceId, r.state.transcript, { label: r.label, resume: r });
+    void run(r.projectId, r.sourceId, r.state.transcript, { label: r.label, resume: r });
   }, [projectRef, run]);
 
-  /** Altyazıyı al (sıra: İngilizce > Türkçe > diğer) ve AI ile işle. */
-  const fetchForSource = useCallback(
-    async (sourceId: string, url: string, manualTitle?: string) => {
-      const pid = projectRef.current?.id;
+  /** Altyazıyı al (sıra: İngilizce > Türkçe > diğer) ve AI ile işle. Kuyruğu yok sayar; çağıran meşguliyeti kontrol eder. */
+  const startFetch = useCallback(
+    async ({ projectId: pid, sourceId, url, title: manualTitle }: QueuedJob) => {
       const token = ++opRef.current;
       setSubPick(null);
-      setProc({ ...IDLE, running: true, phase: "transcript", sourceId });
-      // Başarısız olsa da kaynak bağlantısını hatırlasın (Yeniden dene).
-      mutate((p) => patchSource(p, sourceId, (s) => (s.url === url ? s : { ...s, url })));
+      setProc({ ...IDLE, running: true, phase: "transcript", sourceId, projectId: pid });
       try {
+        // Başarısız olsa da kaynak bağlantısını hatırlasın (Yeniden dene).
+        await updateProject(pid, (p) => patchSource(p, sourceId, (s) => (s.url === url ? s : { ...s, url })));
         const tr = await api.fetchDefaultTranscript(url);
-        if (opRef.current !== token || projectRef.current?.id !== pid) return;
+        if (opRef.current !== token) return;
         const title = manualTitle?.trim() || tr.title?.trim() || "";
-        mutate((p) => {
+        await updateProject(pid, (p) => {
           const q = patchSource(p, sourceId, (s) => ({ ...s, url, transcriptRaw: tr.text, title: manualTitle?.trim() || s.title.trim() || title }));
           return title && NEW_TITLES.includes(q.title) ? { ...q, title } : q;
         });
-        bumpStage(pid, "subs");
-        toast(`Altyazı alındı (${tr.lang})`);
-        await run(sourceId, tr.text, { label: `Altyazı: ${tr.lang}` });
+        if (opRef.current !== token) return;
+        toast(projectRef.current?.id === pid ? `Altyazı alındı (${tr.lang})` : `“${title || url}” altyazısı alındı, işleniyor`);
+        await run(pid, sourceId, tr.text, { label: `Altyazı: ${tr.lang}` });
       } catch (e: any) {
-        if (opRef.current !== token || projectRef.current?.id !== pid) return;
-        setProc({ ...IDLE, sourceId, error: String(e?.message ?? e) });
+        if (opRef.current !== token) return;
+        setProc({ ...IDLE, sourceId, projectId: pid, error: String(e?.message ?? e) });
       }
     },
-    [projectRef, mutate, run, toast, bumpStage],
+    [updateProject, run, toast, projectRef],
   );
+
+  /** Bağlantıdan altyazı çekip işler; başka işlem sürüyorsa sıraya alır. */
+  const fetchForSource = useCallback(
+    (sourceId: string, url: string, title?: string, projectId?: string) => {
+      const pid = projectId ?? projectRef.current?.id;
+      if (!pid) return;
+      const job: QueuedJob = { projectId: pid, sourceId, url, title };
+      if (procRef.current.running || queueRef.current.length) {
+        if (queueRef.current.some((j) => j.sourceId === sourceId)) return toast("Bu bağlantı zaten sırada");
+        setQ([...queueRef.current, job]);
+        toast(`Sıraya eklendi (${queueRef.current.length}. sırada); önceki işlem bitince başlayacak`);
+        return;
+      }
+      void startFetch(job);
+    },
+    [projectRef, startFetch, toast],
+  );
+
+  // Çalışan işlem bitince (başarılı, hatalı ya da iptal) sıradaki iş başlar.
+  useEffect(() => {
+    if (proc.running || !queue.length) return;
+    const [next, ...rest] = queue;
+    setQ(rest);
+    void startFetch(next);
+  }, [proc.running, queue, startFetch]);
+
+  /** Sıradaki bir işi çıkarır. */
+  const dequeue = useCallback((sourceId: string) => setQ(queueRef.current.filter((j) => j.sourceId !== sourceId)), []);
 
   /** Etkin kaynağın altyazısını varsayılan istemle yeniden işler (altyazı yoksa bağlantıdan yeniden çeker). */
   const reprocess = useCallback(() => {
     const p = projectRef.current;
     if (!p) return;
     const src = activeSource(p);
-    if (src.transcriptRaw) void run(src.id, src.transcriptRaw, { label: "Varsayılan istem" });
-    else if (src.url.trim()) void fetchForSource(src.id, src.url.trim());
-  }, [projectRef, run, fetchForSource]);
+    if (src.transcriptRaw) runActive(src.id, src.transcriptRaw, { label: "Varsayılan istem" });
+    else if (src.url.trim()) fetchForSource(src.id, src.url.trim());
+  }, [projectRef, runActive, fetchForSource]);
 
   const customRun = useCallback(
     (prompt: string) => {
       const p = projectRef.current;
       if (!p) return;
       const src = activeSource(p);
-      void run(src.id, src.transcriptRaw || segmentsToMarkdown(src.segments), { label: "Özel istem", customPrompt: prompt });
+      runActive(src.id, src.transcriptRaw || segmentsToMarkdown(src.segments), { label: "Özel istem", customPrompt: prompt });
     },
-    [projectRef, run],
+    [projectRef, runActive],
   );
 
   /** Etkin kaynak boşsa (ilk bağlantı) onu kullanır. */
   const fetchActive = useCallback(
     (url: string, title?: string) => {
       const p = projectRef.current;
-      if (p) void fetchForSource(activeSource(p).id, url, title);
+      if (p) fetchForSource(activeSource(p).id, url, title);
     },
     [projectRef, fetchForSource],
   );
@@ -206,7 +273,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
     (url: string, title?: string) => {
       const src = makeSource(url, title?.trim() ?? "");
       mutate((p) => addSource(p, src));
-      void fetchForSource(src.id, url, title);
+      fetchForSource(src.id, url, title);
     },
     [mutate, fetchForSource],
   );
@@ -219,16 +286,16 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
     if (!src.url.trim()) return toast("Bu kaynağın video bağlantısı yok", "error");
     const pid = p.id;
     const token = ++opRef.current;
-    setProc({ ...IDLE, running: true, phase: "subs", sourceId: src.id });
+    setProc({ ...IDLE, running: true, phase: "subs", sourceId: src.id, projectId: pid });
     try {
       const list = await api.listSubtitles(src.url);
-      if (opRef.current !== token || projectRef.current?.id !== pid) return;
+      if (opRef.current !== token) return;
       setProc(IDLE);
       if (!list.options.length) return toast("Bu videoda altyazı bulunamadı", "error");
-      setSubPick({ sourceId: src.id, url: src.url, list });
+      if (projectRef.current?.id === pid) setSubPick({ projectId: pid, sourceId: src.id, url: src.url, list });
     } catch (e: any) {
-      if (opRef.current !== token || projectRef.current?.id !== pid) return;
-      setProc({ ...IDLE, sourceId: src.id, error: String(e?.message ?? e) });
+      if (opRef.current !== token) return;
+      setProc({ ...IDLE, sourceId: src.id, projectId: pid, error: String(e?.message ?? e) });
     }
   }, [projectRef, toast]);
 
@@ -237,23 +304,22 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
     async (opt: SubOption) => {
       const pick = subPick;
       if (!pick) return;
-      const pid = projectRef.current?.id;
+      const pid = pick.projectId;
       const token = ++opRef.current;
       setSubPick(null);
-      setProc({ ...IDLE, running: true, phase: "transcript", sourceId: pick.sourceId });
+      setProc({ ...IDLE, running: true, phase: "transcript", sourceId: pick.sourceId, projectId: pid });
       try {
         const tr = await api.fetchTranscript(pick.url, opt.lang, opt.auto);
-        if (opRef.current !== token || projectRef.current?.id !== pid) return;
-        mutate((p) => patchSource(p, pick.sourceId, (s) => ({ ...s, transcriptRaw: tr.text, title: s.title.trim() || pick.list.title })));
-        bumpStage(pid, "subs");
+        if (opRef.current !== token) return;
+        await updateProject(pid, (p) => patchSource(p, pick.sourceId, (s) => ({ ...s, transcriptRaw: tr.text, title: s.title.trim() || pick.list.title })));
         toast(`Altyazı alındı (${tr.lang}${tr.auto ? ", otomatik" : ""})`);
-        await run(pick.sourceId, tr.text, { label: `Altyazı: ${tr.lang}${tr.auto ? " (otomatik)" : ""}` });
+        await run(pid, pick.sourceId, tr.text, { label: `Altyazı: ${tr.lang}${tr.auto ? " (otomatik)" : ""}` });
       } catch (e: any) {
-        if (opRef.current !== token || projectRef.current?.id !== pid) return;
-        setProc({ ...IDLE, sourceId: pick.sourceId, error: String(e?.message ?? e) });
+        if (opRef.current !== token) return;
+        setProc({ ...IDLE, sourceId: pick.sourceId, projectId: pid, error: String(e?.message ?? e) });
       }
     },
-    [subPick, projectRef, mutate, run, toast, bumpStage],
+    [subPick, updateProject, run, toast],
   );
 
   /** Geçmişteki bir işleme sürümünü geri getirir (mevcut sürüm onunla yer değiştirir). */
@@ -266,14 +332,18 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
     [projectRef, mutate],
   );
 
-  /** Silinen kaynağın işlemi sürüyorsa durdurur. */
+  /** Silinen kaynağın işlemi sürüyorsa durdurur, sıradaysa çıkarır. */
   const abortSource = useCallback(
     (sourceId: string) => {
+      dequeue(sourceId);
       if (procRef.current.sourceId !== sourceId) return;
-      cancelRun();
+      opRef.current++;
+      runRef.current?.cancel();
+      runRef.current = null;
+      resumeRef.current = null;
       setProc(IDLE);
     },
-    [cancelRun],
+    [dequeue],
   );
 
   // Pencere kapanırken çalışan işlem iptal edilsin.
@@ -281,6 +351,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
 
   return {
     proc,
+    queue,
     subPick,
     setSubPick,
     cancelRun,
@@ -291,6 +362,7 @@ export function usePipeline({ projectRef, mutate, settingsRef, toast, openSettin
     customRun,
     fetchActive,
     fetchForSource,
+    dequeue,
     addSourceFromUrl,
     pickSubtitle,
     downloadSubtitle,

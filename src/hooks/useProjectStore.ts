@@ -30,7 +30,8 @@ export const withSchema = (raw: Project): Project => {
 
 /** İşleme hattının proje değişiminde çağrılan kancaları (App içinde usePipeline ile doldurulur). */
 export interface PipelineLifecycle {
-  cancel: () => void;
+  /** Projeye ait çalışan/sıradaki işlemleri durdurur; kimlik yoksa hepsini. */
+  cancel: (projectId?: string) => void;
   reset: () => void;
 }
 
@@ -82,16 +83,51 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
     setProject(p);
   };
 
-  const openProject = useCallback(
-    async (id: string) => {
-      lifecycle.current.cancel();
-      await saver.flush();
-      const p = withSchema(await api.loadProject(id));
-      show(p);
-      lifecycle.current.reset();
-      patchSettings({ lastProjectId: id });
+  /**
+   * Proje açma ve arka plan güncellemeleri tek sırada çalışır: açılan proje diskten okunurken
+   * arka plandaki bir yazım araya girip birbirini ezemez.
+   */
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const serial = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
+    const next = chain.current.then(job);
+    chain.current = next.catch(() => {});
+    return next;
+  }, []);
+
+  /**
+   * Herhangi bir projeyi günceller: açıksa bellekte (otomatik kayıtla), değilse diskte.
+   * Arka planda işlenen (açık olmayan) projelerin sonucu böylece kaybolmaz.
+   */
+  const updateProject = useCallback(
+    (id: string, fn: (p: Project) => Project): Promise<void> => {
+      if (projectRef.current?.id === id) {
+        mutate(fn);
+        return Promise.resolve();
+      }
+      return serial(async () => {
+        if (projectRef.current?.id === id) return mutate(fn);
+        const cur = withSchema(await api.loadProject(id));
+        const next = fn(cur);
+        if (next === cur) return;
+        const synced = syncTopUrl(next);
+        const updatedAt = await api.saveProject(synced);
+        setProjects((list) => upsertMeta(list, synced, updatedAt));
+      });
     },
-    [lifecycle, saver, patchSettings],
+    [mutate, serial],
+  );
+
+  const openProject = useCallback(
+    (id: string) =>
+      serial(async () => {
+        // Çalışan işlem iptal edilmez; arka planda kendi projesine yazmaya devam eder.
+        await saver.flush();
+        const p = withSchema(await api.loadProject(id));
+        show(p);
+        lifecycle.current.reset();
+        patchSettings({ lastProjectId: id });
+      }),
+    [lifecycle, saver, patchSettings, serial],
   );
 
   /** Açılışta yalnızca liste yüklenir; proje ana sayfadan seçilince açılır. */
@@ -100,11 +136,11 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
   }, [refreshProjects]);
 
   const createProject = useCallback(
-    async (title: string, url: string, extra?: ProjectPatch) => {
+    async (title: string, url: string, extra?: ProjectPatch, open = true) => {
       const p = await api.createProject(title, url);
       if (extra) await api.patchProject(p.id, extra);
       await refreshProjects();
-      await openProject(p.id);
+      if (open) await openProject(p.id);
       return p;
     },
     [refreshProjects, openProject],
@@ -116,10 +152,9 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
   const deleteById = useCallback(
     async (id: string) => {
       const open = projectRef.current?.id === id;
-      if (open) {
-        lifecycle.current.cancel();
-        saver.cancel();
-      }
+      lifecycle.current.cancel(id);
+      if (open) saver.cancel();
+      await chain.current;
       await api.deleteProject(id);
       if (open) {
         show(null);
@@ -154,6 +189,7 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
   const clearAll = useCallback(async () => {
     lifecycle.current.cancel();
     saver.cancel();
+    await chain.current;
     await api.clearAll();
     show(null);
     setProjects([]);
@@ -161,5 +197,5 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
     patchSettings({ lastProjectId: "" });
   }, [lifecycle, saver, patchSettings]);
 
-  return { projects, project, projectRef, status, saver, mutate, openProject, loadInitial, createProject, rename, deleteById, editProject, clearAll };
+  return { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, rename, deleteById, editProject, clearAll };
 }
