@@ -18,7 +18,7 @@ import { createAutosaver } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
 import { fontCss } from "./lib/fonts";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
-import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sources";
+import { activeSource, patchSource, removeSource, sourceLabel, subtitleLang } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
 import { disfluentWords } from "./lib/disfluency";
 import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
@@ -391,6 +391,8 @@ export default function App() {
                   title={source.title.trim() || project.title}
                   marks={videoMarks}
                   transcriptRaw={source.transcriptRaw}
+                  origLang={subtitleLang(source)}
+                  segments={source.segments}
                   onToast={toast}
                 />
               </div>

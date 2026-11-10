@@ -9,6 +9,15 @@ export const NEW_TITLES = ["Yeni proje", "Yükleniyor…"];
 
 const newId = () => crypto.randomUUID();
 
+/** Kaynağın orijinal altyazı dili ("Altyazı: de-orig" gibi işleme etiketinden); bilinmiyorsa boş. */
+export function subtitleLang(s: Pick<Source, "procLabel" | "history">): string {
+  for (const label of [s.procLabel, ...(s.history ?? []).map((h) => h.label)]) {
+    const m = /Altyazı:\s*([a-z]{2,3})/i.exec(label ?? "");
+    if (m) return m[1].toLowerCase();
+  }
+  return "";
+}
+
 export function makeSource(url = "", title = "", now = Date.now(), id: string = newId()): Source {
   return { id, url, title, transcriptRaw: "", segments: [], insights: [], createdAt: now };
 }

@@ -162,3 +162,20 @@ export function chunkText(text: string, max: number): string[] {
   if (cur) out.push(cur);
   return out;
 }
+
+/**
+ * Oynatma zamanında çalan çevrilmiş (Türkçe) cümle: tüm bölümler içinde başlangıcı `time`'dan önce olan en son cümle.
+ * Zaman işareti olmayan bölümler atlanır; hiç yoksa boş döner.
+ */
+export function translatedSentenceAt(segments: { text: string; marks?: SentenceMark[] }[], time: number): string {
+  let best: { t: number; text: string } | null = null;
+  for (const s of segments) {
+    if (!s.marks?.length) continue;
+    const paras = paragraphsOf(s.text);
+    const r = sentenceAtTime(s.marks, paras.map((p) => p.length), time);
+    if (!r) continue;
+    const t = markTimeAt(s.marks, r.para, r.start) ?? 0;
+    if (!best || t > best.t) best = { t, text: (paras[r.para] ?? "").slice(r.start, r.end).trim() };
+  }
+  return best?.text ?? "";
+}

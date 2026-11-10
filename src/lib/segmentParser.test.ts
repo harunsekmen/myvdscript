@@ -30,3 +30,19 @@ describe("chunkText", () => {
     expect(c.join(" ")).toBe(t);
   });
 });
+
+describe("translatedSentenceAt", () => {
+  const segs = [
+    { text: "Merhaba. Nasılsın?\n\nİkinci paragraf.", marks: [{ para: 0, start: 0, t: 1 }, { para: 0, start: 9, t: 3 }, { para: 1, start: 0, t: 6 }] },
+    { text: "Zamansız bölüm." },
+    { text: "Son bölüm.", marks: [{ para: 0, start: 0, t: 10 }] },
+  ];
+  it("çalan cümleyi döndürür", async () => {
+    const { translatedSentenceAt } = await import("./segmentParser");
+    expect(translatedSentenceAt(segs, 0.5)).toBe("");
+    expect(translatedSentenceAt(segs, 1.2)).toBe("Merhaba.");
+    expect(translatedSentenceAt(segs, 4)).toBe("Nasılsın?");
+    expect(translatedSentenceAt(segs, 7)).toBe("İkinci paragraf.");
+    expect(translatedSentenceAt(segs, 12)).toBe("Son bölüm.");
+  });
+});

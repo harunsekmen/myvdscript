@@ -165,3 +165,12 @@ describe("proje listesi özeti", () => {
     expect(m.sources).toEqual([{ url: "https://youtu.be/abc", title: "Eski proje" }]);
   });
 });
+
+describe("altyazı dili", () => {
+  it("işleme etiketinden ya da geçmişten bulunur", async () => {
+    const { subtitleLang } = await import("./sources");
+    expect(subtitleLang({ procLabel: "Altyazı: de-orig (otomatik)" })).toBe("de");
+    expect(subtitleLang({ procLabel: "Özel istem", history: [{ label: "Altyazı: en", segments: [], insights: [], createdAt: 0 }] })).toBe("en");
+    expect(subtitleLang({})).toBe("");
+  });
+});

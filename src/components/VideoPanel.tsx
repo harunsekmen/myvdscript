@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
+import { translatedSentenceAt } from "../lib/segmentParser";
+import type { Segment } from "../lib/types";
 import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
 
@@ -20,7 +22,8 @@ function Icon({ d, w = 2, fill = false }: { d: string; w?: number; fill?: boolea
   );
 }
 
-const RATES = [0.75, 1, 1.25, 1.5, 2];
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const CUE_KEY = "sa.cueLang";
 
 const clock = (s: number) => {
   const t = Math.max(0, Math.floor(s));
@@ -47,17 +50,26 @@ interface Props {
   marks: number[];
   /** `[dk:sn] metin` biçimli orijinal altyazı; çalan satırı göstermek için. */
   transcriptRaw: string;
+  /** Orijinal altyazının dil kodu (bilinmiyorsa boş). */
+  origLang: string;
+  /** Çevrilmiş bölümler (cümle zaman işaretleriyle); altyazı kutusunda Türkçe göstermek için. */
+  segments: Segment[];
   onToast: (msg: string, kind?: "error" | "info") => void;
 }
 
 /** Orta panel: gömülü YouTube videosu, oynatma kontrolleri, canlı altyazı, bölümler ve video bilgisi. */
-export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props) {
+export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segments, onToast }: Props) {
   const id = videoIdOf(url);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [meta, setMeta] = useState<Meta | null>(id ? metaCache.get(id) ?? null : null);
   const [open, setOpen] = useState(false);
   const [rate, setRateState] = useState(1);
   const [shot, setShot] = useState<number | null>(null);
+  const [rateOpen, setRateOpen] = useState(false);
+  const rateRef = useRef<HTMLDivElement>(null);
+  const [cueLang, setCueLang] = useState<"orig" | "tr">(() => (localStorage.getItem(CUE_KEY) === "tr" ? "tr" : "orig"));
+  const hasTr = segments.some((s) => s.marks?.length);
+  const showTr = cueLang === "tr" && hasTr;
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
   const cues = useMemo(() => parseCues(transcriptRaw), [transcriptRaw]);
 
@@ -67,6 +79,18 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
     setRateState(1);
     return attachFrame(f, id);
   }, [id]);
+
+  useEffect(() => {
+    if (!rateOpen) return;
+    const close = (e: MouseEvent) => !rateRef.current?.contains(e.target as Node) && setRateOpen(false);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setRateOpen(false);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", key);
+    };
+  }, [rateOpen]);
 
   useEffect(() => {
     setOpen(false);
@@ -117,9 +141,21 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
   const pickRate = (r: number) => {
     setRateState(r);
     setRate(r);
+    setRateOpen(false);
+  };
+  const toggleCueLang = () => {
+    const next = cueLang === "tr" ? "orig" : "tr";
+    setCueLang(next);
+    localStorage.setItem(CUE_KEY, next);
   };
 
-  const cue = ready && vs.playing ? (cues.filter((c) => c.t <= time + 0.5).pop()?.text ?? "") : "";
+  const playing = ready && vs.playing;
+  const cue = !playing
+    ? ""
+    : showTr
+      ? translatedSentenceAt(segments, time + 0.3)
+      : (cues.filter((c) => c.t <= time + 0.5).pop()?.text ?? "");
+  const origTag = (origLang.split("-")[0] || "EN").toUpperCase().slice(0, 3);
   const origin = encodeURIComponent(window.location.origin);
   const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&playsinline=1&origin=${origin}`;
   const desc = meta?.description.trim() ?? "";
@@ -183,16 +219,56 @@ export function VideoPanel({ url, title, marks, transcriptRaw, onToast }: Props)
             <button className="vp-btn" onClick={openShot} disabled={!ready} title="Bu anın karesini tam ekran göster (ekran görüntüsü için)" aria-label="Kareyi tam ekran göster">
               <Icon d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3ZM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
             </button>
-          </div>
-          <div className="vp-rates" role="group" aria-label="Oynatma hızı">
-            {RATES.map((r) => (
-              <button key={r} className={r === rate ? "on" : ""} onClick={() => pickRate(r)} disabled={!ready}>{r}×</button>
-            ))}
+            <span className="vp-sep" />
+            <div className="vp-rate" ref={rateRef}>
+              <button
+                className={"vp-rate-btn" + (rate !== 1 ? " on" : "") + (rateOpen ? " open" : "")}
+                onClick={() => setRateOpen(!rateOpen)}
+                disabled={!ready}
+                title="Oynatma hızı"
+                aria-haspopup="menu"
+                aria-expanded={rateOpen}
+              >
+                {rate}×
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+              {rateOpen && (
+                <div className="vp-rate-menu" role="menu" aria-label="Oynatma hızı">
+                  {RATES.map((r) => (
+                    <button key={r} role="menuitemradio" aria-checked={r === rate} className={r === rate ? "on" : ""} onClick={() => pickRate(r)}>
+                      {r === 1 ? "Normal" : `${r}×`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <div className={"vp-cue" + (cue ? " live" : "")}>
-          <span className="vp-cue-tag">EN</span>
-          <span className="vp-cue-text">{cue || (ready ? "Video çalarken orijinal altyazı burada görünür" : "Video yükleniyor…")}</span>
+          <button
+            className={"vp-cue-tag" + (showTr ? " tr" : "")}
+            onClick={toggleCueLang}
+            disabled={!hasTr}
+            title={
+              hasTr
+                ? showTr
+                  ? "Türkçe çeviri gösteriliyor; orijinal altyazıya geçmek için tıkla"
+                  : "Orijinal altyazı gösteriliyor; Türkçe çeviriye geçmek için tıkla"
+                : "Türkçe için soldaki metnin zaman işaretli işlenmesi gerekir"
+            }
+          >
+            {showTr ? "TR" : origTag}
+          </button>
+          <span className="vp-cue-text">
+            {cue ||
+              (!ready
+                ? "Video yükleniyor…"
+                : showTr
+                  ? "Video çalarken Türkçe çeviri burada görünür"
+                  : "Video çalarken orijinal altyazı burada görünür")}
+          </span>
         </div>
 
         <div className="video-info">
