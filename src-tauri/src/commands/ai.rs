@@ -1,5 +1,5 @@
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::async_runtime::JoinHandle;
@@ -19,6 +19,26 @@ pub struct AiState(Mutex<HashMap<String, JoinHandle<()>>>);
 struct AiEvent {
     kind: &'static str, // delta | done | error
     text: String,
+}
+
+/// Sohbet geçmişindeki tek bir mesaj (yalnızca "user" ya da "assistant").
+#[derive(Deserialize, Clone)]
+pub struct ChatMsg {
+    role: String,
+    content: String,
+}
+
+/// Sistem istemi, (varsa) önceki sohbet ve son kullanıcı mesajından istek gövdesindeki mesaj listesini kurar.
+fn build_messages(system: &str, history: &[ChatMsg], user: &str) -> Vec<Value> {
+    let mut out = vec![json!({ "role": "system", "content": system })];
+    for m in history {
+        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        if !m.content.trim().is_empty() {
+            out.push(json!({ "role": role, "content": m.content }));
+        }
+    }
+    out.push(json!({ "role": "user", "content": user }));
+    out
 }
 
 fn endpoint(base: &str, path: &str) -> String {
@@ -67,11 +87,13 @@ pub fn ai_stream(
     system: String,
     user: String,
     temperature: f64,
+    history: Option<Vec<ChatMsg>>,
 ) {
+    let messages = build_messages(&system, history.as_deref().unwrap_or(&[]), &user);
     let event = format!("ai://{request_id}");
     let rid = request_id.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        match run_stream(&app, &event, &base_url, &model, &system, &user, temperature).await {
+        match run_stream(&app, &event, &base_url, &model, messages, temperature).await {
             Ok(()) => {
                 let _ = app.emit(&event, AiEvent { kind: "done", text: String::new() });
             }
@@ -91,18 +113,14 @@ async fn run_stream(
     event: &str,
     base_url: &str,
     model: &str,
-    system: &str,
-    user: &str,
+    messages: Vec<Value>,
     temperature: f64,
 ) -> Result<(), String> {
     let body = json!({
         "model": model,
         "stream": true,
         "temperature": temperature,
-        "messages": [
-            { "role": "system", "content": system },
-            { "role": "user", "content": user },
-        ],
+        "messages": messages,
     });
     let resp = with_auth(crate::http::client().post(endpoint(base_url, "chat/completions")))
         .json(&body)
@@ -178,5 +196,32 @@ async fn run_stream(
 pub fn ai_cancel(state: State<'_, AiState>, request_id: String) {
     if let Some(h) = state.0.lock().unwrap().remove(&request_id) {
         h.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m(role: &str, content: &str) -> ChatMsg {
+        ChatMsg { role: role.into(), content: content.into() }
+    }
+
+    #[test]
+    fn messages_without_history() {
+        let v = build_messages("sys", &[], "soru");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0]["role"], "system");
+        assert_eq!(v[1]["content"], "soru");
+    }
+
+    #[test]
+    fn messages_with_history_sanitized() {
+        let h = [m("user", "a"), m("assistant", "b"), m("system", "c"), m("assistant", "  ")];
+        let v = build_messages("sys", &h, "d");
+        let roles: Vec<&str> = v.iter().map(|x| x["role"].as_str().unwrap()).collect();
+        // "system" rolü kullanıcı mesajına indirgenir, boş mesaj atlanır.
+        assert_eq!(roles, ["system", "user", "assistant", "user", "user"]);
+        assert_eq!(v[4]["content"], "d");
     }
 }

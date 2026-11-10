@@ -20,7 +20,7 @@ import { fontCss } from "./lib/fonts";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
 import { activeSource, patchSource, removeSource, sourceLabel } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
-import type { ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
+import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
 import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
 
@@ -296,6 +296,10 @@ export default function App() {
     (sourceId: string, insights: Insight[]) => mutate((p) => patchSource(p, sourceId, (s) => ({ ...s, insights }))),
     [mutate],
   );
+  const onChat = useCallback(
+    (sourceId: string, chat: ChatMessage[]) => mutate((p) => patchSource(p, sourceId, (s) => ({ ...s, chat }))),
+    [mutate],
+  );
   const onSelectSource = useCallback((id: string) => mutate((p) => (p.activeSourceId === id ? p : { ...p, activeSourceId: id })), [mutate]);
   const onDoc = useCallback((doc: any) => mutate((p) => ({ ...p, editorDoc: doc }), false), [mutate]);
   const onTimed = useCallback((doc: TimedDoc) => mutate((p) => ({ ...p, timed: doc })), [mutate]);
@@ -362,6 +366,7 @@ export default function App() {
               models={models}
               proc={pipe.proc}
               onInsights={onInsights}
+              onChat={onChat}
               onReprocess={pipe.reprocess}
               onCustomRun={pipe.customRun}
               onCancel={pipe.cancel}

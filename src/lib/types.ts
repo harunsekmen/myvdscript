@@ -51,6 +51,16 @@ export interface TimedDoc {
   cuts?: { silenceSec?: number; off?: string[]; on?: string[] };
 }
 
+/** Kaynak metin hakkında AI ile sohbet mesajı. */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  model?: string; // yanıtı üreten model (yalnız assistant)
+  quote?: string; // soruya eklenen seçili metin (yalnız user)
+  createdAt: number;
+}
+
 /** Yeniden işlemeden önceki sürüm: geri dönmek için saklanır. */
 export interface HistoryEntry {
   segments: Segment[];
@@ -72,6 +82,8 @@ export interface Source {
   processedAt?: number;
   procLabel?: string;
   history?: HistoryEntry[]; // en yeni başta, en çok 3
+  /** Bu kaynak metin hakkında AI ile yapılan sohbet. */
+  chat?: ChatMessage[];
 }
 
 export interface Project {

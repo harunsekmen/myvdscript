@@ -5,8 +5,9 @@ import { buildInsightMessage, CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
 import { activeSource, sourceLabel } from "../lib/sources";
 import { speak } from "../lib/speech";
-import type { Insight, ProcState, Project, SentenceMark, Settings } from "../lib/types";
+import type { ChatMessage, Insight, ProcState, Project, SentenceMark, Settings } from "../lib/types";
 import { getVideoState, playAt, subscribeVideo, videoIdOf } from "../lib/youtube";
+import { ChatPanel } from "./ChatPanel";
 import { PromptDialog } from "./Dialogs";
 import { InsightCard } from "./InsightCard";
 import { SpeakIcon } from "./SpeakIcon";
@@ -20,6 +21,7 @@ interface Props {
   models: string[];
   proc: ProcState;
   onInsights: (sourceId: string, insights: Insight[]) => void;
+  onChat: (sourceId: string, chat: ChatMessage[]) => void;
   onReprocess: () => void;
   onCustomRun: (prompt: string) => void;
   onCancel: () => void;
@@ -147,6 +149,7 @@ export function LeftPane({
   models,
   proc,
   onInsights,
+  onChat,
   onReprocess,
   onCustomRun,
   onCancel,
@@ -175,6 +178,10 @@ export function LeftPane({
   const [activeSeg, setActiveSeg] = useState(0);
   const [adding, setAdding] = useState(false);
   const runRef = useRef<{ id: string; cancel: () => void } | null>(null);
+  const [chatOpen, setChatOpen] = useState(() => localStorage.getItem("sa.chatOpen") === "1");
+  const [chatQuote, setChatQuote] = useState<string | null>(null);
+  const [chatH, setChatH] = useState(() => Number(localStorage.getItem("sa.chatH")) || 0.42);
+  const paneRef = useRef<HTMLDivElement>(null);
   const insightsRef = useRef(source.insights);
   insightsRef.current = source.insights;
 
@@ -187,6 +194,7 @@ export function LeftPane({
     setSel(null);
     setLive(null);
     setAdding(false);
+    setChatQuote(null);
   }, [project.id, source.id]);
 
   const readSelection = useCallback(() => {
@@ -280,6 +288,40 @@ export function LeftPane({
     runInsight(insight, settings.insightModel || settings.model, sel.context);
   };
 
+  const toggleChat = (open = !chatOpen) => {
+    setChatOpen(open);
+    localStorage.setItem("sa.chatOpen", open ? "1" : "0");
+  };
+
+  // Seçili metni alıntı olarak sohbete ekler.
+  const askSel = () => {
+    if (!sel) return;
+    setChatQuote(sel.quote);
+    toggleChat(true);
+    window.getSelection()?.removeAllRanges();
+    setSel(null);
+  };
+
+  // Sohbet bölmesinin yüksekliğini sürükleyerek ayarla (sol panelin oranı olarak).
+  const startChatDrag = (e: React.PointerEvent) => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    e.preventDefault();
+    const r = pane.getBoundingClientRect();
+    let h = chatH;
+    const move = (ev: PointerEvent) => {
+      h = Math.min(0.85, Math.max(0.18, (r.bottom - ev.clientY) / r.height));
+      setChatH(h);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      localStorage.setItem("sa.chatH", String(h));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   // Seçili cümlenin orijinal sesi (zaman işaretleri varsa); yoksa seslendirme (TTS).
   const speakSel = () => {
     if (!sel) return;
@@ -355,8 +397,8 @@ export function LeftPane({
     }
   };
 
-  // Seçim balonu ekranın dışına taşmasın diye yatay konumu sınırlanır (iki düğme ~170px).
-  const selLeft = sel ? Math.min(Math.max(sel.rect.left + sel.rect.width / 2, 96), window.innerWidth - 96) : 0;
+  // Seçim balonu ekranın dışına taşmasın diye yatay konumu sınırlanır (üç düğme ~250px).
+  const selLeft = sel ? Math.min(Math.max(sel.rect.left + sel.rect.width / 2, 130), window.innerWidth - 130) : 0;
 
   const contextOf = (i: Insight) => {
     const list = paras.get(i.segmentId) ?? [];
@@ -433,9 +475,18 @@ export function LeftPane({
   const closeMenu = () => setProcMenu(false);
 
   return (
-    <div className="pane left-pane">
+    <div className="pane left-pane" ref={paneRef}>
       <div className="pane-head">
         <span className="pane-title">Kaynak metin</span>
+        {segments.length > 0 && (
+          <button
+            className={"btn small chat-toggle" + (chatOpen ? " on" : "")}
+            onClick={() => toggleChat()}
+            title="Bu metin hakkında AI'a soru sor"
+          >
+            ✦ Sor{(source.chat?.length ?? 0) > 0 ? ` (${Math.ceil((source.chat?.length ?? 0) / 2)})` : ""}
+          </button>
+        )}
         {busyHere ? (
           <>
             <span className="muted">
@@ -636,6 +687,27 @@ export function LeftPane({
         </div>
       </div>
 
+      {chatOpen && segments.length > 0 && (
+        <>
+          <div className="chat-divider" onPointerDown={startChatDrag} title="Sürükleyerek boyutlandır" />
+          <div className="chat-wrap" style={{ height: `${chatH * 100}%` }}>
+            <ChatPanel
+              key={source.id}
+              title={source.title.trim() || project.title}
+              segments={segments}
+              messages={source.chat ?? []}
+              settings={settings}
+              models={models}
+              quote={chatQuote}
+              onClearQuote={() => setChatQuote(null)}
+              onChange={(msgs) => onChat(source.id, msgs)}
+              onClose={() => toggleChat(false)}
+              onToast={onToast}
+            />
+          </div>
+        </>
+      )}
+
       {sel && (
         <div
           className="sel-pop"
@@ -643,6 +715,7 @@ export function LeftPane({
           onMouseDown={(e) => e.preventDefault()}
         >
           <button onClick={explain}>✦ Açıkla</button>
+          <button className="speak" onClick={askSel} title="Seçili metni alıntılayarak AI'a soru sor">Sor</button>
           {sel.quote.length <= SPEAK_MAX_CHARS && /\p{L}/u.test(sel.quote) && (
             <button className="speak" onClick={speakSel} title="Seçili metni dinle" aria-label="Seçili metni dinle">
               <SpeakIcon />

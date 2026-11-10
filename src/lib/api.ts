@@ -93,6 +93,8 @@ export function streamChat(opts: {
   system: string;
   user: string;
   temperature: number;
+  /** Çok turlu sohbet için önceki mesajlar (system ile son user arasına girer). */
+  history?: { role: "user" | "assistant"; content: string }[];
   onText?: (full: string) => void;
 }): StreamHandle {
   const requestId = crypto.randomUUID();
@@ -125,6 +127,7 @@ export function streamChat(opts: {
         system: opts.system,
         user: opts.user,
         temperature: opts.temperature,
+        history: opts.history ?? null,
       });
     } catch (err) {
       unlisten?.();
