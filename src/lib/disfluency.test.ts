@@ -26,6 +26,11 @@ describe("gereksiz kelimeler", () => {
     expect([...m.keys()]).toEqual(["w2"]);
   });
 
+  it("cümle sonu ve sonraki cümle başındaki aynı kelime tekrar sayılmaz", () => {
+    const m = localDisfluent(doc(["anlatmak", "istedim", "bu.", "Bu", "yüzden"]).items);
+    expect(m.size).toBe(0);
+  });
+
   it("AI bir cümlenin tüm tekrarlarını işaretlese de en son söylenen hali kalır", () => {
     const sent = "TypeScript'te olan iki şeyi size hızlıca göstermek istiyorum".split(" ");
     const words = [...sent, ...sent, "Böylece", "bu"];

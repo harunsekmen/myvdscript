@@ -62,6 +62,7 @@ export function TopBar(p: Props) {
         Ana sayfa
       </button>
       {p.view === "project" && (
+      <div className="proj-group">
       <div className="dropdown" ref={ref}>
         <button className="btn proj-btn" onClick={() => setOpen(!open)} title="Projeler (Ctrl+K)">
           <span className="proj-name">{current?.title ?? "Proje seç…"}</span>
@@ -89,8 +90,7 @@ export function TopBar(p: Props) {
           </div>
         )}
       </div>
-      )}
-      {p.view === "project" && current && (
+      {current && (
         <div className="dropdown" ref={panelRef}>
           <button className="stage-trigger" onClick={() => setPanel(!panel)} title="Aşama ve kontrol listesi">
             <StagePill stages={p.stages} id={current.stage} />
@@ -109,8 +109,16 @@ export function TopBar(p: Props) {
           )}
         </div>
       )}
-      {p.view === "project" && <button className="btn" onClick={p.onNewFromLink}>＋ Linkten başlat</button>}
+      </div>
+      )}
       <div className="spacer" data-tauri-drag-region />
+      {p.view === "project" && (
+        <button className="icon-btn settings-btn" onClick={p.onNewFromLink} title="Linkten yeni proje başlat" aria-label="Linkten yeni proje başlat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      )}
       <button className="icon-btn settings-btn" onClick={p.onSettings} title="Ayarlar (Ctrl+,)" aria-label="Ayarlar">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3" />

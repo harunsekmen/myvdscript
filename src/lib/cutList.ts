@@ -91,13 +91,15 @@ export function detectFillers(words: CutWord[]): Cut[] {
   return out;
 }
 
-/** Hemen art arda tekrarlanan aynı kelime ("bu bu"): öndeki silinir. */
+/** Hemen art arda tekrarlanan aynı kelime ("bu bu"): öndeki silinir. Cümle sonu + cümle başı sayılmaz. */
 export function detectRepeats(words: CutWord[]): Cut[] {
   const out: Cut[] = [];
   for (let i = 0; i + 1 < words.length; i++) {
     const a = words[i];
     const b = words[i + 1];
     if (!a.n || a.n !== b.n || FILLERS.has(a.n)) continue;
+    // Cümle sınırı: "…bu. Bu yüzden…" tekrar değildir.
+    if (/[.!?…:;]["'”’)]*$/u.test(a.w.trim())) continue;
     out.push({ id: `rep:${a.id}`, type: "repeat", start: a.s, end: b.s, wordIds: [a.id], anchorId: a.id, text: `${a.w} ${b.w}`, defaultOn: true });
   }
   return out;

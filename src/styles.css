@@ -840,3 +840,10 @@ button.video-title:hover { color: var(--accent); text-decoration: underline; }
 .pane-head:has(.rtabs) { flex-wrap: wrap; row-gap: 6px; gap: 8px; }
 .pane-head .btn.small { white-space: nowrap; }
 .rtab { white-space: nowrap; }
+
+/* Üst çubuk: proje seçici ve aşama etiketi tek kutuda */
+.proj-group { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.proj-group .proj-btn { border: none; background: none; border-radius: 7px 0 0 7px; }
+.proj-group .proj-btn:hover:not(:disabled) { background: #2b2f3e; }
+.proj-group > .dropdown + .dropdown { border-left: 1px solid var(--line); padding: 0 6px; align-self: stretch; display: flex; align-items: center; }
+.proj-group .stage-trigger { border-radius: 6px; padding: 3px 6px; }

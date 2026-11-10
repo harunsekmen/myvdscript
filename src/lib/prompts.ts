@@ -91,6 +91,9 @@ export const WORD_CHECK_PROMPT =`Sen bir transkript düzeltme asistanısın. San
 2) GEREKSİZ KELİMELER (drop): Video kurgusunda kesilebilecek, anlatıma bilgi katmayan kelimeleri işaretle. Türler:
 - "filler": dolgu sesleri ve dolgu kelimeleri (ıı, ee, hmm, şey, yani, işte, hani, falan, like, um gibi); yalnızca gerçekten dolgu olarak kullanıldığında. "Bu şeyi aldım" gibi anlam taşıyan kullanımı işaretleme.
 - "repeat": art arda gereksizce tekrarlanan kelime ya da kısa öbek ("bu bu", "ben ben"); tekrarın ÖNCEKİ kısmını işaretle, sonuncusu kalsın.
+  - Yalnızca konuşmacının takılıp aynı kelimeyi istemeden yinelediği durumlar tekrardır. Bir kelimenin iki kez geçmesi tek başına tekrar DEĞİLDİR: anlam ve dilbilgisi açısından iki kelime de cümlede görevliyse dokunma.
+  - Özellikle cümle sınırına dikkat et: bir cümle bir kelimeyle bitip sonraki cümle aynı kelimeyle başlıyorsa ("...böyle anlatmak istedim bu. Bu yüzden...", "...olduğunu görüyoruz. Görüyoruz ki...") bu bir tekrar değildir, işaretleme. Noktalama ya da büyük harf yoksa bile iki kelimenin ayrı cümlelere ait olup olmadığını anlamdan çıkar.
+  - Emin değilsen işaretleme; yanlışlıkla anlamlı bir kelimeyi silmek, bir tekrarı kaçırmaktan daha kötüdür.
 - "retake": konuşmacının yarım bırakıp baştan yeniden söylediği cümle/öbek; yarım kalan İLK denemeyi işaretle, düzgün söylenen son hali kalsın. Aynı cümle iki ya da daha fazla kez söylendiyse yalnızca ÖNCEKİ denemeleri işaretle; EN SON söylenen hali (tam olsun olmasın) ASLA işaretleme, yoksa cümle tamamen kaybolur.
 - Emin değilsen işaretleme. Anlam taşıyan hiçbir kelimeyi işaretleme.
 - Tek kelime için {"n":5,"t":"filler"}, ardışık kelimeler için {"from":30,"to":36,"t":"retake"} kullan.
