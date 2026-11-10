@@ -249,7 +249,8 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
       while (idx < without.length && isAttached(without[idx])) idx++;
     } else idx = without.length;
     const next = [...without];
-    next.splice(idx, 0, dragged);
+    // Elle taşınan resmin konumu artık kullanıcı onaylıdır
+    next.splice(idx, 0, dragged.k === "img" && dragged.approx ? { ...dragged, approx: undefined } : dragged);
     commit(next);
     if (wordId) flash(wordId);
   };
@@ -443,8 +444,19 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
       case "img":
         return (
           <span key={item.id} className="timg-wrap" data-anchor={anchor} draggable onDragStart={onDragStartItem(item.id)} onDragEnd={onDragEnd}>
-            <span className="image-chip tchip" title={item.path} onClick={() => onOpenImage(item.path)}>
+            <span
+              className={"image-chip tchip" + (item.approx ? " approx" : "")}
+              title={
+                (item.approx
+                  ? "Konumu yaklaşık: konuşmada senaryodaki yeri tam bulunamadı. Doğru kelimeye sürükleyip bırakınca onaylanır.\n"
+                  : item.from === "script"
+                    ? "Senaryodan, söylendiği yere otomatik yerleştirildi.\n"
+                    : "") + item.path
+              }
+              onClick={() => onOpenImage(item.path)}
+            >
               <span className="chip-ico" />
+              {item.approx && <span className="approx-mark">≈</span>}
               {item.name}
               <button
                 className="tchip-x"

@@ -39,7 +39,8 @@ export type TimedItem =
   | { k: "w"; id: string; w: string; s: number; e: number } // kelime, başlangıç/bitiş (sn)
   | { k: "br" } // satır sonu
   | { k: "note"; id: string; text: string } // yazarın notu
-  | { k: "img"; id: string; path: string; name: string }; // resim
+  // resim; from: "script" → senaryodan otomatik yerleştirildi, approx → konumu kesin değil (kontrol edilmeli)
+  | { k: "img"; id: string; path: string; name: string; from?: "script"; approx?: boolean };
 
 export interface TimedDoc {
   source: string; // kaynak dosya adı

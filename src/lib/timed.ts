@@ -134,7 +134,7 @@ export function exportTimed(
       out.push(`[NOT @${fmtTime(anchorTime(doc.items, i))}]: ${text}`);
     } else if (full && it.k === "img") {
       flush();
-      out.push(`[RESİM @${fmtTime(anchorTime(doc.items, i))}]: ${it.name} (${it.path})`);
+      out.push(`[RESİM @${fmtTime(anchorTime(doc.items, i))}${it.approx ? " (konum yaklaşık)" : ""}]: ${it.name} (${it.path})`);
       const note = oneLine(meta[it.path]?.note ?? "");
       if (note) out.push(`[RESİM NOTU]: ${note}`);
     }

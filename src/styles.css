@@ -274,6 +274,9 @@ mark.hl:hover { background: #f2b44d55; }
 .tchip-x { background: none; border: none; color: #8fa0e0; font-size: 13px; line-height: 1; padding: 0 0 0 2px; margin-left: 2px; opacity: 0; transition: opacity .1s; }
 .tchip:hover .tchip-x { opacity: 1; }
 .tchip-x:hover { color: var(--danger); }
+.tchip.approx { border-style: dashed; border-color: #b8913f; color: #f0d79a; background: #3a3322; }
+.tchip.approx:hover { background: #463d28; }
+.approx-mark { font-weight: 700; margin-right: 2px; }
 /* Not rozeti: küçük ikon; üstüne gelince notu gösterir, tıklayınca düzenlenir */
 .tnote-wrap { position: relative; display: inline-block; vertical-align: middle; margin: 0 2px; cursor: grab; }
 .tnote-wrap:active { cursor: grabbing; }

@@ -9,6 +9,7 @@ import { collectImagePaths, type CopyMode } from "../lib/copyExport";
 import { CopyButton } from "./CopyButton";
 import { speak } from "../lib/speech";
 import { buildTimed, collectTimedPaths } from "../lib/timed";
+import { applyMoves, placeScriptImages, refineWithAI } from "../lib/scriptImages";
 import { checkWords } from "../lib/wordCheck";
 import type { ImageMeta, Project, Settings, TimedDoc } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
@@ -49,6 +50,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const [pick, setPick] = useState<{ text: string; x: number; y: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
+  const [placing, setPlacing] = useState<{ done: number; total: number } | null>(null);
   const [replacePath, setReplacePath] = useState<string | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
   const alive = useRef(true);
@@ -252,6 +254,48 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
     }
   };
 
+  /**
+   * Senaryodaki resimleri zamanlı metne yerleştirir (senkron). Yeri kesin olmayanlar için `refine`, model seçiliyse
+   * AI'a sorup resimleri doğru kelimeye taşır.
+   */
+  const placeImages = (doc: TimedDoc) => {
+    const editorDoc = editorRef.current?.getJSON() ?? project.editorDoc;
+    const meta = project.imageMeta;
+    const r = placeScriptImages(doc, editorDoc, meta);
+    const willRefine = r.approx.length > 0 && !!settings.model;
+    const summary = !r.placed
+      ? ""
+      : `${r.placed} resim senaryodan yerleştirildi` +
+        (!r.approx.length ? "" : willRefine ? ` (${r.approx.length} tanesinin yeri AI ile bulunuyor)` : ` (${r.approx.length} tanesinin yeri yaklaşık, kontrol et)`);
+    const refine = async () => {
+      if (!willRefine) return;
+      setPlacing({ done: 0, total: 1 });
+      try {
+        const { moves, failed } = await refineWithAI(r.doc, editorDoc, meta, r.approx, r.ids, settings, (done, total) => alive.current && setPlacing({ done, total }));
+        if (!alive.current) return;
+        if (moves.size) onPatchTimed((d) => ({ ...d, items: applyMoves(d.items, moves) }));
+        if (failed) onToast(`AI ${moves.size} resmin yerini buldu; ${failed} tanesi yaklaşık kaldı (kesik çerçeveli), sürükleyerek düzeltebilirsin`);
+        else onToast(`AI ${moves.size} resmin yerini buldu`);
+      } finally {
+        if (alive.current) setPlacing(null);
+      }
+    };
+    return { doc: r.doc, placed: r.placed, summary, refine };
+  };
+
+  /** Senaryodaki resimleri mevcut zamanlı metne yeniden yerleştirir (senaryoya sonradan resim eklendiyse). */
+  const replaceImages = () => {
+    if (!project.timed) return;
+    const r = placeImages(project.timed);
+    if (!r.placed) {
+      onToast("Senaryoda yerleştirilecek resim yok", "error");
+      return;
+    }
+    onTimedChange(r.doc);
+    onToast(r.summary);
+    void r.refine();
+  };
+
   const transcribe = async (path: string) => {
     const name = path.split(/[\\/]/).pop() ?? "medya";
     setBusy(name);
@@ -259,11 +303,13 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       const r = await api.transcribeMedia(path, settings.sttLanguage);
       if (!alive.current) return;
       if (!r.words.length) throw new Error("Konuşma bulunamadı");
-      const doc = buildTimed(r.words, name, r.language || "?");
+      const placed = placeImages(buildTimed(r.words, name, r.language || "?"));
+      const doc = placed.doc;
       onTimedChange(doc);
       onTab("timed");
-      onToast(`${r.words.length} kelime zamanlandı`);
-      void runCheck(doc);
+      onToast([`${r.words.length} kelime zamanlandı`, placed.summary].filter(Boolean).join(" · "));
+      // Önce resim yerleri (kısa), sonra kelime kontrolü; aynı modele art arda gider.
+      void placed.refine().finally(() => alive.current && runCheck(doc));
     } catch (e) {
       if (alive.current) onToast(`Ses çevrilemedi: ${e}`, "error");
     } finally {
@@ -309,6 +355,16 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
           <span className="pane-title">Senaryo</span>
         )}
         <span className="spacer" />
+        {timedTab && editorPaths.current.size > 0 && (
+          <button
+            className="btn small"
+            onClick={replaceImages}
+            disabled={!!checking || !!busy || !!placing}
+            title="Senaryodaki resimleri, söylendikleri yere göre zamanlı metne yeniden yerleştir (senaryodan gelen resimlerin konumu sıfırlanır; elle eklediklerin kalır)"
+          >
+            🖼 Resimleri yerleştir
+          </button>
+        )}
         {timedTab && (
           <button
             className="btn small"
@@ -332,6 +388,11 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       {busy && (
         <div className="banner busy">
           <span>⏳ “{busy}” yazıya çevriliyor… (uzun dosyalarda birkaç dakika sürebilir)</span>
+        </div>
+      )}
+      {placing && (
+        <div className="banner busy">
+          <span>✦ AI senaryodaki resimlerin yerini buluyor… ({placing.done}/{placing.total})</span>
         </div>
       )}
       {checking && (
@@ -378,7 +439,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       {replacePath && (
         <ConfirmDialog
           title="Zamanlı metin değişecek"
-          message="Bu projedeki mevcut zamanlı metin, buradaki notlar ve resimler kaldırılacak. Devam edilsin mi?"
+          message="Bu projedeki mevcut zamanlı metin, buradaki notlar ve elle eklenen resimler kaldırılacak; senaryodaki resimler yeni kayda göre yeniden yerleştirilir. Devam edilsin mi?"
           confirmLabel="Yeni dosyayla değiştir"
           danger
           onConfirm={() => {
