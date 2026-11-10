@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { useVideoStats } from "../hooks/useVideoStats";
 import { api, type ProjectPatch } from "../lib/api";
 import {
@@ -85,6 +85,36 @@ const I = {
   search: "M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM21 21l-4.3-4.3",
   archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
 };
+
+/**
+ * Açılır pencere: önce tıklanan noktaya yerleşir, sonra gerçek boyutu ölçülüp pencere içine sığdırılır
+ * (sağ/alt kenara yakınsa sola/yukarı kayar).
+ */
+function PopBox({ x, y, width, className, children }: { x: number; y: number; width: number; className: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y, ready: false });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const M = 8;
+    let left = x;
+    let top = y;
+    if (left + r.width > window.innerWidth - M) left = Math.max(M, window.innerWidth - r.width - M);
+    if (top + r.height > window.innerHeight - M) top = Math.max(M, window.innerHeight - r.height - M);
+    setPos({ left, top, ready: true });
+  }, [x, y, className]);
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{ left: pos.left, top: pos.top, width, visibility: pos.ready ? "visible" : "hidden" }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
 
 interface CardProps {
   meta: ProjectMeta;
@@ -324,15 +354,12 @@ export function HomePage({ projects, settings, runningId, videoStats, onOpen, on
 
   const renderPop = () => {
     if (!pop || !popMeta) return null;
-    const w = pop.kind === "menu" ? 230 : 340;
-    const h = pop.kind === "menu" ? 360 : 520;
-    const left = Math.max(8, Math.min(pop.x, window.innerWidth - w - 8));
-    const top = Math.max(8, Math.min(pop.y, window.innerHeight - h - 8));
+    const w = pop.kind === "menu" ? 250 : 340;
     const firstUrl = projectStats(popMeta, stats).videos.find((v) => v.id)?.url;
     const cur = resolveStage(stages, popMeta.stage).id;
     return (
       <div className="home-pop-back" onMouseDown={closePop} onContextMenu={(e) => (e.preventDefault(), closePop())}>
-        <div className={"home-pop " + pop.kind} style={{ left, top, width: w }} onMouseDown={(e) => e.stopPropagation()}>
+        <PopBox key={pop.kind} x={pop.x} y={pop.y} width={w} className={"home-pop " + pop.kind}>
           {pop.kind === "menu" ? (
             <div className="menu-flat">
               {item("Aç", () => onOpen(popMeta.id))}
@@ -352,7 +379,7 @@ export function HomePage({ projects, settings, runningId, videoStats, onOpen, on
                     }}
                   >
                     <i />
-                    {s.label}
+                    <span className="ellipsis">{s.label}</span>
                   </button>
                 ))}
               </div>
@@ -367,7 +394,7 @@ export function HomePage({ projects, settings, runningId, videoStats, onOpen, on
           ) : (
             <StagePanel stages={stages} stage={popMeta.stage} checklist={popMeta.checklist ?? []} note={popMeta.note} onChange={(patch) => onEdit(popMeta.id, patch)} />
           )}
-        </div>
+        </PopBox>
       </div>
     );
   };

@@ -670,8 +670,8 @@ mark.hl:hover { background: #f2b44d55; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* Menü: aşamaya taşı */
-.menu-stages { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 2px 4px 4px; }
-.menu-flat .menu-stages button { --c: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 5px 7px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-stages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 2px 4px 4px; }
+.menu-flat .menu-stages button { --c: var(--muted); display: flex; align-items: center; justify-content: flex-start; gap: 6px; min-width: 0; font-size: 12px; padding: 5px 7px; border-radius: 6px; white-space: nowrap; overflow: hidden; }
 .menu-stages button i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
 .menu-flat .menu-stages button.on { background: color-mix(in srgb, var(--c) 22%, transparent); }
 
@@ -709,7 +709,7 @@ button.stage-pill:hover { background: color-mix(in srgb, var(--c) 28%, transpare
 
 /* Kart açılır penceresi */
 .home-pop-back { position: fixed; inset: 0; z-index: 90; }
-.home-pop { position: fixed; background: var(--bg-3); border: 1px solid #3a3f55; border-radius: 10px; box-shadow: 0 12px 32px #000a; padding: 4px; max-height: calc(100vh - 16px); overflow-y: auto; }
+.home-pop { position: fixed; box-sizing: border-box; overflow-x: hidden; background: var(--bg-3); border: 1px solid #3a3f55; border-radius: 10px; box-shadow: 0 12px 32px #000a; padding: 4px; max-height: calc(100vh - 16px); overflow-y: auto; }
 .menu-flat { display: flex; flex-direction: column; gap: 2px; }
 .menu-flat button { text-align: left; background: none; border: none; padding: 7px 10px; border-radius: 6px; }
 .menu-flat button:hover { background: #2f3446; }
