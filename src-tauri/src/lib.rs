@@ -24,6 +24,17 @@ pub fn run() {
             let root = store::pick_root(appdata);
             store::migrate_from_exe_dir(&root);
             store::init(root);
+            // Ana pencere koddan kurulur: gömülü YouTube videosunun açmak istediği yeni pencereler
+            // (başlık, logo, "YouTube'da izle") uygulama içinde engellenmek yerine tarayıcıda açılır.
+            let conf = app.config().app.windows.first().cloned().ok_or("pencere ayarı yok")?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &conf)?
+                .on_new_window(|url, _features| {
+                    if matches!(url.scheme(), "http" | "https") {
+                        let _ = external::open_external(url.to_string());
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
+                .build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

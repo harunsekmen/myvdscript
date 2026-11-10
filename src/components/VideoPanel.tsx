@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { api } from "../lib/api";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { api, streamChat } from "../lib/api";
+import { buildChapterMessage, CHAPTER_PROMPT, parseChapterTitles, sameTitles } from "../lib/chapters";
 import { translatedSentenceAt } from "../lib/segmentParser";
-import type { Segment } from "../lib/types";
+import type { Segment, Settings } from "../lib/types";
 import { attachFrame, getVideoState, pauseVideo, playAt, seekTo, setRate, subscribeVideo, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
 
@@ -54,11 +56,15 @@ interface Props {
   origLang: string;
   /** Çevrilmiş bölümler (cümle zaman işaretleriyle); altyazı kutusunda Türkçe göstermek için. */
   segments: Segment[];
+  /** Kayıtlı bölüm başlığı çevirisi ve kaydetme. */
+  chaptersTr?: { src: string[]; tr: string[] };
+  onChaptersTr: (v: { src: string[]; tr: string[] }) => void;
+  settings: Settings;
   onToast: (msg: string, kind?: "error" | "info") => void;
 }
 
 /** Orta panel: gömülü YouTube videosu, oynatma kontrolleri, canlı altyazı, bölümler ve video bilgisi. */
-export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segments, onToast }: Props) {
+export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segments, chaptersTr, onChaptersTr, settings, onToast }: Props) {
   const id = videoIdOf(url);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [meta, setMeta] = useState<Meta | null>(id ? metaCache.get(id) ?? null : null);
@@ -70,6 +76,8 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const [cueLang, setCueLang] = useState<"orig" | "tr">(() => (localStorage.getItem(CUE_KEY) === "tr" ? "tr" : "orig"));
   const hasTr = segments.some((s) => s.marks?.length);
   const showTr = cueLang === "tr" && hasTr;
+  const [fs, setFs] = useState(false);
+  const [chTrBusy, setChTrBusy] = useState(false);
   const vs = useSyncExternalStore(subscribeVideo, getVideoState);
   const cues = useMemo(() => parseCues(transcriptRaw), [transcriptRaw]);
 
@@ -111,6 +119,56 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
     };
   }, [id, url]);
 
+  // Bölüm başlıkları gelince (kayıtlı çevirisi yoksa) AI ile bir kez Türkçeleştirilir ve kaynağa kaydedilir.
+  const chapterTitles = useMemo(() => (meta?.chapters ?? []).map((c) => c.title), [meta]);
+  const trTitles = sameTitles(chaptersTr?.src, chapterTitles) ? chaptersTr!.tr : null;
+  const onChTrRef = useRef(onChaptersTr);
+  onChTrRef.current = onChaptersTr;
+  useEffect(() => {
+    if (!chapterTitles.length || trTitles || !settings.model) return;
+    let alive = true;
+    setChTrBusy(true);
+    const h = streamChat({
+      baseUrl: settings.baseUrl,
+      model: settings.insightModel || settings.model,
+      system: CHAPTER_PROMPT,
+      user: buildChapterMessage(chapterTitles),
+      temperature: 0.2,
+    });
+    h.done
+      .then((text) => {
+        const tr = parseChapterTitles(text, chapterTitles.length);
+        if (tr) onChTrRef.current({ src: chapterTitles, tr });
+      })
+      .catch(() => {})
+      .finally(() => alive && setChTrBusy(false));
+    return () => {
+      alive = false;
+      h.cancel();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterTitles, !!trTitles, settings.model, settings.insightModel, settings.baseUrl]);
+
+  // Tam ekran: video kutusu pencereyi kaplar ve pencere de tam ekran olur (iframe yeniden yüklenmez).
+  useEffect(() => {
+    if (!fs) return;
+    const win = getCurrentWindow();
+    let was = false;
+    win
+      .isFullscreen()
+      .then((f) => {
+        was = f;
+        if (!f) return win.setFullscreen(true);
+      })
+      .catch(() => {});
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setFs(false);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("keydown", key);
+      if (!was) win.setFullscreen(false).catch(() => {});
+    };
+  }, [fs]);
+
   if (!id) return null;
   const ready = vs.ready && vs.videoId === id;
   const time = ready ? vs.time : 0;
@@ -143,6 +201,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
     setRate(r);
     setRateOpen(false);
   };
+  const openOnYoutube = () => api.openExternal(`https://www.youtube.com/watch?v=${id}${time > 1 ? `&t=${Math.floor(time)}s` : ""}`);
   const toggleCueLang = () => {
     const next = cueLang === "tr" ? "orig" : "tr";
     setCueLang(next);
@@ -168,7 +227,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
         <span className="pane-title">Video</span>
       </div>
       <div className="video-scroll">
-        <div className="video-frame">
+        <div className={"video-frame" + (fs ? " fs" : "")}>
           <iframe
             ref={frameRef}
             src={src}
@@ -177,6 +236,33 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
             referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
           />
+          {fs && (
+            <>
+              {cue && <div className="vf-cue">{cue}</div>}
+              <div className="vf-bar">
+                <button className="vp-btn main" onClick={toggle} disabled={!ready} title={vs.playing ? "Duraklat" : "Oynat"} aria-label={vs.playing ? "Duraklat" : "Oynat"}>
+                  {vs.playing ? <Icon d="M7 4v16M17 4v16" w={3} /> : <Icon d="M7 4.5v15l13-7.5-13-7.5Z" fill />}
+                </button>
+                <span className="vp-time">{clock(time)}</span>
+                <input
+                  type="range"
+                  aria-label="Video konumu"
+                  min={0}
+                  max={vs.duration || 1}
+                  step={0.5}
+                  value={Math.min(time, vs.duration || time)}
+                  disabled={!ready || !vs.duration}
+                  style={{ "--p": `${vs.duration ? Math.min(100, (time / vs.duration) * 100) : 0}%` } as React.CSSProperties}
+                  onChange={(e) => seekTo(Number(e.target.value))}
+                />
+                <span className="vp-time">{clock(vs.duration)}</span>
+                <button className="vf-lang" onClick={toggleCueLang} disabled={!hasTr} title="Altyazı dili">{showTr ? "TR" : origTag}</button>
+                <button className="vp-btn" onClick={() => setFs(false)} title="Tam ekrandan çık (Esc)" aria-label="Tam ekrandan çık">
+                  <Icon d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                </button>
+              </div>
+            </>
+          )}
         </div>
         {vs.error && (
           <div className="banner error">
@@ -219,6 +305,12 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
             <button className="vp-btn" onClick={openShot} disabled={!ready} title="Bu anın karesini tam ekran göster (ekran görüntüsü için)" aria-label="Kareyi tam ekran göster">
               <Icon d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3ZM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
             </button>
+            <button className="vp-btn" onClick={() => setFs(true)} disabled={!ready} title="Videoyu tam ekran izle (Esc ile çık)" aria-label="Tam ekran">
+              <Icon d="M3 8V5a2 2 0 0 1 2-2h3m8 0h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3m-8 0H5a2 2 0 0 1-2-2v-3" />
+            </button>
+            <button className="vp-btn" onClick={openOnYoutube} title="Videoyu bu andan YouTube'da (tarayıcıda) aç" aria-label="YouTube'da aç">
+              <Icon d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </button>
             <span className="vp-sep" />
             <div className="vp-rate" ref={rateRef}>
               <button
@@ -250,16 +342,18 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
           <button
             className={"vp-cue-tag" + (showTr ? " tr" : "")}
             onClick={toggleCueLang}
-            disabled={!hasTr}
+            disabled={!hasTr && !trTitles}
             title={
               hasTr
                 ? showTr
                   ? "Türkçe çeviri gösteriliyor; orijinal altyazıya geçmek için tıkla"
                   : "Orijinal altyazı gösteriliyor; Türkçe çeviriye geçmek için tıkla"
-                : "Türkçe için soldaki metnin zaman işaretli işlenmesi gerekir"
+                : trTitles
+                  ? "Bölüm başlıklarını Türkçe/orijinal göster"
+                  : "Türkçe için soldaki metnin zaman işaretli işlenmesi gerekir"
             }
           >
-            {showTr ? "TR" : origTag}
+            {cueLang === "tr" && (hasTr || trTitles) ? "TR" : origTag}
           </button>
           <span className="vp-cue-text">
             {cue ||
@@ -281,13 +375,16 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
               <img className="video-thumb" src={`https://i.ytimg.com/vi/${id}/mqdefault.jpg`} alt="" draggable={false} />
             </button>
             <div className="video-head-text">
-              <div className="video-title">{meta?.title || title}</div>
+              <button className="video-title" onClick={openOnYoutube} title="YouTube'da (tarayıcıda) aç">{meta?.title || title}</button>
               {meta?.channel && <div className="video-channel muted">{meta.channel}</div>}
             </div>
           </div>
           {chapters.length > 0 && (
             <div className="vp-chapters">
-              <div className="vp-sub">Bölümler</div>
+              <div className="vp-sub">
+                Bölümler
+                {chTrBusy && !trTitles && <span className="vp-sub-note"> · Türkçeleştiriliyor…</span>}
+              </div>
               {chapters.map((c, i) => (
                 <button
                   key={i}
@@ -301,7 +398,9 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
                   }}
                 >
                   <span className="vp-ch-t">{clock(c.start)}</span>
-                  <span className="vp-ch-n">{c.title}</span>
+                  <span className="vp-ch-n" title={cueLang === "tr" && trTitles ? c.title : trTitles?.[i]}>
+                    {cueLang === "tr" && trTitles ? trTitles[i] : c.title}
+                  </span>
                 </button>
               ))}
             </div>

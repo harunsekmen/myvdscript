@@ -7,6 +7,7 @@ import {
   formatDelta,
   formatDuration,
   projectStats,
+  moveStage,
   resolveStage,
   timeAgo,
   type ProjectStats,
@@ -135,9 +136,11 @@ function AddStageColumn({ onAdd }: { onAdd: (label: string) => void }) {
   };
   if (!editing) {
     return (
-      <button className="kcol-add" onClick={() => setEditing(true)} title="Panoya yeni bir aşama sütunu ekle (Ayarlar > Ana sayfa'dan düzenlenebilir)">
-        ＋ Aşama ekle
-      </button>
+      <div className="kcol-add">
+        <button onClick={() => setEditing(true)} title="Panoya yeni bir aşama sütunu ekle (Ayarlar > Ana sayfa'dan düzenlenebilir)">
+          ＋ Aşama ekle
+        </button>
+      </div>
     );
   }
   return (
@@ -308,6 +311,9 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
   const [showArchive, setShowArchive] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropCol, setDropCol] = useState<string | null>(null);
+  // Sütun (aşama) sürükleme: başlıktan tutulur; bırakılacak yer seçili sütunun önü ya da arkasıdır.
+  const [colDrag, setColDrag] = useState<string | null>(null);
+  const [colTarget, setColTarget] = useState<{ id: string; after: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const stages = settings.stages;
   const sort: HomeSort = settings.homeSort === "stage" ? "updated" : settings.homeSort;
@@ -347,8 +353,32 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
     }
   };
 
+  const endColDrag = () => {
+    setColDrag(null);
+    setColTarget(null);
+  };
+  const dropColumn = () => {
+    const from = colDrag;
+    const t = colTarget;
+    endColDrag();
+    if (!from || !t) return;
+    const i = stages.findIndex((s) => s.id === t.id);
+    const before = t.after ? stages[i + 1]?.id ?? null : t.id;
+    const next = moveStage(stages, from, before);
+    if (next !== stages) onSettings({ stages: next });
+  };
+
   const colProps = (col: string) => ({
     onDragOver: (e: React.DragEvent) => {
+      if (colDrag) {
+        if (col === ARCHIVE) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const r = e.currentTarget.getBoundingClientRect();
+        const after = e.clientX > r.left + r.width / 2;
+        if (colTarget?.id !== col || colTarget.after !== after) setColTarget({ id: col, after });
+        return;
+      }
       if (!dragId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
@@ -359,6 +389,7 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
     },
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
+      if (colDrag) return dropColumn();
       drop(col);
     },
   });
@@ -503,8 +534,28 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
         {stages.map((s) => {
           const col = columns.get(s.id) ?? [];
           return (
-            <section key={s.id} className={"kcol" + (dropCol === s.id ? " drop" : "")} style={{ "--c": s.color } as CSSProperties} {...colProps(s.id)}>
-              <header className="kcol-head">
+            <section
+              key={s.id}
+              className={
+                "kcol" +
+                (dropCol === s.id ? " drop" : "") +
+                (colDrag === s.id ? " col-dragging" : "") +
+                (colTarget?.id === s.id && colDrag !== s.id ? (colTarget.after ? " col-after" : " col-before") : "")
+              }
+              style={{ "--c": s.color } as CSSProperties}
+              {...colProps(s.id)}
+            >
+              <header
+                className="kcol-head"
+                draggable
+                title="Sütunu sürükleyerek sırasını değiştir"
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", s.id);
+                  setColDrag(s.id);
+                }}
+                onDragEnd={endColDrag}
+              >
                 <i />
                 <span className="ellipsis">{s.label}</span>
                 <b className="tnum">{col.length}</b>
@@ -516,7 +567,7 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
             </section>
           );
         })}
-        {!dragId && <AddStageColumn onAdd={(label) => onSettings({ stages: [...stages, newStage(label, stages.length)] })} />}
+        {!dragId && !colDrag && <AddStageColumn onAdd={(label) => onSettings({ stages: [...stages, newStage(label, stages.length)] })} />}
         {(showArchive || dragId) && archivedTotal + (dragId ? 1 : 0) > 0 && (
           <section className={"kcol archive" + (dropCol === ARCHIVE ? " drop" : "")} style={{ "--c": "#6b7085" } as CSSProperties} {...colProps(ARCHIVE)}>
             <header className="kcol-head">

@@ -779,7 +779,26 @@ button.stage-pill:hover { background: color-mix(in srgb, var(--c) 28%, transpare
 /* Pano: sıradaki kart ve "＋ Aşama ekle" sütunu */
 .kcard.queued { border-color: #f5b84b66; }
 .kbadge.queued { left: 6px; top: 6px; background: #f5b84bdd; color: #1a1c24; }
-.kcol-add { flex: 0 0 200px; align-self: flex-start; height: 44px; border: 1px dashed #2e3344; border-radius: 14px; background: none; color: var(--muted); font-size: 13px; cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
-.kcol-add:hover { border-color: var(--accent); color: var(--text); background: #6c8cff0d; }
-.kcol-add.editing { display: flex; align-items: center; padding: 0 6px; cursor: default; border-style: solid; border-color: var(--accent); }
-.kcol-add.editing .input { padding: 6px 8px; }
+.kcol-add { flex: 1 0 252px; max-width: 340px; min-height: 0; display: flex; flex-direction: column; padding: 8px; border: 1px dashed #2e3344; border-radius: 14px; transition: border-color .15s, background .15s; }
+.kcol-add:hover, .kcol-add.editing { border-color: var(--accent); background: #6c8cff0a; }
+.kcol-add > button { height: 38px; border: none; border-radius: 10px; background: none; color: var(--muted); font-size: 13px; cursor: pointer; transition: color .15s, background .15s; }
+.kcol-add > button:hover { color: var(--text); background: #6c8cff14; }
+.kcol-add.editing .input { padding: 8px 10px; }
+.kcol-head[draggable="true"] { cursor: grab; }
+.kcol.col-dragging { opacity: .45; }
+.kcol.col-before { box-shadow: -4px 0 0 0 var(--accent); }
+.kcol.col-after { box-shadow: 4px 0 0 0 var(--accent); }
+
+/* Video: tam ekran, YouTube'da aç, bölüm çevirisi */
+.video-frame.fs { position: fixed; inset: 0; z-index: 9000; aspect-ratio: auto; width: 100vw; height: 100vh; }
+.vf-bar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(820px, calc(100% - 40px)); display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 14px; background: #101218d9; border: 1px solid #ffffff1a; backdrop-filter: blur(6px); opacity: 0; transition: opacity .2s; }
+.video-frame.fs:hover .vf-bar, .vf-bar:focus-within { opacity: 1; }
+.vf-bar input { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--accent) var(--p, 0%), #ffffff30 var(--p, 0%)); }
+.vf-bar input::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: none; }
+.vf-bar .vp-btn { color: #e8eaf2; }
+.vf-lang { border: 1px solid #ffffff30; background: none; color: #e8eaf2; border-radius: 6px; padding: 2px 7px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.vf-lang:disabled { opacity: .4; cursor: default; }
+.vf-cue { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: min(900px, calc(100% - 60px)); padding: 6px 14px; border-radius: 8px; background: #000000b3; color: #fff; font-size: 22px; line-height: 1.4; text-align: center; pointer-events: none; }
+button.video-title { background: none; border: none; padding: 0; text-align: left; color: inherit; font: inherit; font-weight: 600; font-size: 15px; line-height: 1.4; cursor: pointer; }
+button.video-title:hover { color: var(--accent); text-decoration: underline; }
+.vp-sub-note { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--accent); }

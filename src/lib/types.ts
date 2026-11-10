@@ -91,6 +91,8 @@ export interface Source {
   history?: HistoryEntry[]; // en yeni başta, en çok 3
   /** Bu kaynak metin hakkında AI ile yapılan sohbet. */
   chat?: ChatMessage[];
+  /** Video bölüm başlıklarının Türkçe çevirisi (src: çevrilen özgün başlıklar). */
+  chaptersTr?: { src: string[]; tr: string[] };
 }
 
 export interface Project {

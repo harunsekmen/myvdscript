@@ -158,3 +158,17 @@ export function advanceStage(stages: StageDef[], current: string | undefined, ta
   const c = stages.findIndex((s) => s.id === current);
   return t > Math.max(c, 0) || (c < 0 && t > 0) ? target : null;
 }
+
+/**
+ * Aşama sütununu taşır: `from` kimlikli aşama, `before` kimlikli aşamanın önüne
+ * (`before` null ise en sona) yerleşir. Değişiklik yoksa aynı dizi döner.
+ */
+export function moveStage<T extends { id: string }>(stages: T[], from: string, before: string | null): T[] {
+  const item = stages.find((s) => s.id === from);
+  if (!item || from === before) return stages;
+  const rest = stages.filter((s) => s.id !== from);
+  const at = before === null ? rest.length : rest.findIndex((s) => s.id === before);
+  if (at < 0) return stages;
+  const next = [...rest.slice(0, at), item, ...rest.slice(at)];
+  return next.every((s, i) => s === stages[i]) ? stages : next;
+}

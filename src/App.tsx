@@ -403,6 +403,9 @@ export default function App() {
                   transcriptRaw={source.transcriptRaw}
                   origLang={subtitleLang(source)}
                   segments={source.segments}
+                  chaptersTr={source.chaptersTr}
+                  onChaptersTr={(v) => mutate((p) => patchSource(p, source.id, (x) => ({ ...x, chaptersTr: v })))}
+                  settings={settings}
                   onToast={toast}
                 />
               </div>

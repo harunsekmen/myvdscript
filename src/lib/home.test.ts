@@ -144,3 +144,17 @@ describe("varsayılan aşamalar", () => {
     expect(migrateStages(renamed)).toEqual(renamed);
   });
 });
+
+describe("aşama sütunu taşıma", () => {
+  it("önüne / sona taşır, değişmezse aynı diziyi döndürür", async () => {
+    const { moveStage } = await import("./home");
+    const s = ["a", "b", "c", "d"].map((id) => ({ id }));
+    const ids = (x: { id: string }[]) => x.map((y) => y.id).join("");
+    expect(ids(moveStage(s, "d", "a"))).toBe("dabc");
+    expect(ids(moveStage(s, "a", "c"))).toBe("bacd");
+    expect(ids(moveStage(s, "b", null))).toBe("acdb");
+    expect(moveStage(s, "a", "b")).toBe(s); // zaten b'nin önünde
+    expect(moveStage(s, "a", "a")).toBe(s);
+    expect(moveStage(s, "x", "a")).toBe(s);
+  });
+});
