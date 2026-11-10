@@ -57,9 +57,34 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
   useEffect(() => {
     if (quote) inputRef.current?.focus();
   }, [quote]);
+  // Yeni yanıt gelmeye başlayınca yanıtın başına yumuşakça kaydırılır; sonra akış sırasında aşağı çekilmez,
+  // böylece uzun yanıt baştan okunabilir. (Soru gönderilince alta inilir ki soru ve "bekleniyor" görünsün.)
+  const jumpRef = useRef(false);
+  const liveElRef = useRef<HTMLDivElement>(null);
+  // Yumuşak kaydırma sürerken kaydırma olayları "altta kal" kararını değiştirmesin (animasyon yarıda kesilmesin)
+  const jumpingUntil = useRef(0);
   useLayoutEffect(() => {
     const el = bodyRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (jumpRef.current) {
+      const lastMsg = msgsRef.current[msgsRef.current.length - 1];
+      const target = live
+        ? live.text && !live.error
+          ? liveElRef.current
+          : null
+        : lastMsg?.role === "assistant"
+          ? (el.querySelector(".chat-msg:last-of-type") as HTMLElement | null)
+          : null;
+      if (target) {
+        jumpRef.current = false;
+        stickRef.current = false;
+        jumpingUntil.current = Date.now() + 800;
+        const top = el.scrollTop + target.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+        el.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        return;
+      }
+    }
+    if (stickRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, live]);
 
   const pickModel = (m: string) => {
@@ -75,6 +100,7 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
     if (!useModel) return onToast("Önce Ayarlar'dan bir model seçin", "error");
     runRef.current?.cancel();
     stickRef.current = true;
+    jumpRef.current = true;
     const h = streamChat({
       baseUrl: settings.baseUrl,
       model: useModel,
@@ -170,6 +196,7 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
         ref={bodyRef}
         onScroll={(e) => {
           const el = e.currentTarget;
+          if (Date.now() < jumpingUntil.current) return;
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
       >
@@ -194,7 +221,7 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
           </div>
         ))}
         {live && (
-          <div className="chat-msg assistant">
+          <div className="chat-msg assistant" ref={liveElRef}>
             {live.error ? (
               <div className="banner error">
                 <span>{live.error}</span>

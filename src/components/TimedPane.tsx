@@ -250,7 +250,7 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
     } else idx = without.length;
     const next = [...without];
     // Elle taşınan resmin konumu artık kullanıcı onaylıdır
-    next.splice(idx, 0, dragged.k === "img" && dragged.approx ? { ...dragged, approx: undefined } : dragged);
+    next.splice(idx, 0, (dragged.k === "img" || dragged.k === "note") && dragged.approx ? { ...dragged, approx: undefined } : dragged);
     commit(next);
     if (wordId) flash(wordId);
   };
@@ -433,8 +433,14 @@ export function TimedPane({ doc, onDoc, saveImage, onOpenImage, onToast }: Props
           >
             <button
               id={"n-" + item.id}
-              className={"tn-badge" + (noteOpen === item.id ? " on" : "")}
-              title={item.text ? item.text : "Not (boş)"}
+              className={"tn-badge" + (noteOpen === item.id ? " on" : "") + (item.approx ? " approx" : "")}
+              title={
+                (item.approx
+                  ? "Konumu yaklaşık (senaryodan): doğru kelimeye sürükleyip bırakınca onaylanır.\n"
+                  : item.from === "script"
+                    ? "Senaryodaki AI notu, ilgili yere otomatik yerleştirildi.\n"
+                    : "") + (item.text ? item.text : "Not (boş)")
+              }
               onClick={() => openNote(item.id)}
             >
               <NoteIcon />

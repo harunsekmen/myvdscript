@@ -131,7 +131,7 @@ export function exportTimed(
       const text = oneLine(it.text);
       if (!text) return;
       flush();
-      out.push(`[NOT @${fmtTime(anchorTime(doc.items, i))}]: ${text}`);
+      out.push(`[NOT @${fmtTime(anchorTime(doc.items, i))}${it.approx ? " (konum yaklaşık)" : ""}]: ${text}`);
     } else if (full && it.k === "img") {
       flush();
       out.push(`[RESİM @${fmtTime(anchorTime(doc.items, i))}${it.approx ? " (konum yaklaşık)" : ""}]: ${it.name} (${it.path})`);

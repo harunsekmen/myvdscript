@@ -9,7 +9,8 @@ import { collectImagePaths, type CopyMode } from "../lib/copyExport";
 import { CopyButton } from "./CopyButton";
 import { speak } from "../lib/speech";
 import { buildTimed, collectTimedPaths } from "../lib/timed";
-import { applyMoves, placeScriptImages, refineWithAI } from "../lib/scriptImages";
+import { NOTE_MARK, applyMoves, hasScriptAtts, placeScriptItems, refineWithAI } from "../lib/scriptPlace";
+import { ScriptNote } from "./scriptNote";
 import { checkWords } from "../lib/wordCheck";
 import type { ImageMeta, Project, Settings, TimedDoc } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
@@ -47,7 +48,8 @@ const MEDIA_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "webm", "ogg", "flac", "mp
 
 export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
-  const [pick, setPick] = useState<{ text: string; x: number; y: number } | null>(null);
+  // Seçim balonu: dinle (kısa seçimlerde) ve AI notuna çevir/notu kaldır
+  const [pick, setPick] = useState<{ text: string; x: number; y: number; speak: boolean; note: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
   const [placing, setPlacing] = useState<{ done: number; total: number } | null>(null);
@@ -61,6 +63,8 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const timedPaths = useRef<Set<string>>(collectTimedPaths(project.timed));
   const pending = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const isUsed = (p: string) => editorPaths.current.has(p) || timedPaths.current.has(p);
+  // Senaryoda zamanlı metne yerleştirilecek resim ya da AI notu var mı (düğmeyi göstermek için)
+  const editorAtts = useRef(hasScriptAtts(project.editorDoc));
 
   const play = (text: string) => {
     void speak(text).then((ok) => ok || onToast("Ses çalınamadı (internet bağlantısını kontrol et)", "error"));
@@ -117,8 +121,9 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4, 5, 6] } }),
-      Placeholder.configure({ placeholder: "Scriptini buraya yaz… (Ctrl+V ile resim yapıştırabilirsin)" }),
+      Placeholder.configure({ placeholder: "Scriptini buraya yaz… (Ctrl+V ile resim yapıştırabilir, metni seçip AI notuna çevirebilirsin: Ctrl+Shift+N)" }),
       ImageChip,
+      ScriptNote,
       Markdown,
       MarkdownEnter,
     ],
@@ -152,12 +157,15 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
           return false;
         },
         mouseup: (view) => {
-          // Seçim oturunca (kelime ya da öbek) seçimin tam ortasının üstünde dinle düğmesini göster
+          // Seçim oturunca seçimin tam ortasının üstünde balon: dinle (kısa seçimlerde) ve AI notuna çevir
           setTimeout(() => {
             const { from, to, empty } = view.state.selection;
-            if (empty || to - from > 200) return;
+            if (empty) return;
             const text = view.state.doc.textBetween(from, to, " ").trim().replace(/\s+/g, " ");
-            if (!/\p{L}/u.test(text)) return;
+            if (!/[\p{L}\p{N}]/u.test(text)) return;
+            const noteType = view.state.schema.marks[NOTE_MARK];
+            const note = !!noteType && view.state.doc.rangeHasMark(from, to, noteType);
+            const canSpeak = to - from <= 200 && /\p{L}/u.test(text);
             const sel = window.getSelection();
             let rect: DOMRect | null = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
             if (!rect || !rect.width) {
@@ -165,7 +173,10 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
               const b = view.coordsAtPos(to);
               rect = new DOMRect(a.left, a.top, Math.max(b.right - a.left, 1), b.bottom - a.top);
             }
-            setPick({ text, x: rect.left + rect.width / 2, y: rect.top });
+            // Uzun seçimde üst kenar ekran dışında kalabilir; balon görünür alanda tutulur
+            const box = view.dom.closest(".editor-scroll")?.getBoundingClientRect();
+            const y = Math.max(rect.top, (box?.top ?? 0) + 44);
+            setPick({ text, x: rect.left + rect.width / 2, y, speak: canSpeak, note });
           }, 0);
           return false;
         },
@@ -182,10 +193,21 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       const doc = editor.getJSON();
       onDoc(doc);
       editorPaths.current = collectImagePaths(doc);
+      editorAtts.current = hasScriptAtts(doc);
       reconcile();
     },
   });
   editorRef.current = editor;
+
+  /** Seçili metni AI notuna çevirir; seçimde zaten not varsa not işaretini kaldırır. */
+  const toggleNote = (remove: boolean) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const chain = ed.chain().focus();
+    (remove ? chain.unsetMark(NOTE_MARK) : chain.setMark(NOTE_MARK)).run();
+    setPick(null);
+    if (!remove) onToast("Not olarak işaretlendi: seslendirmede aranmaz, zamanlı metne ilgili yere not olarak konur");
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -258,14 +280,16 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
    * Senaryodaki resimleri zamanlı metne yerleştirir (senkron). Yeri kesin olmayanlar için `refine`, model seçiliyse
    * AI'a sorup resimleri doğru kelimeye taşır.
    */
-  const placeImages = (doc: TimedDoc) => {
+  const placeAtts = (doc: TimedDoc) => {
     const editorDoc = editorRef.current?.getJSON() ?? project.editorDoc;
     const meta = project.imageMeta;
-    const r = placeScriptImages(doc, editorDoc, meta);
+    const r = placeScriptItems(doc, editorDoc, meta);
+    const placed = r.images + r.notes;
     const willRefine = r.approx.length > 0 && !!settings.model;
-    const summary = !r.placed
+    const what = [r.images ? `${r.images} resim` : "", r.notes ? `${r.notes} not` : ""].filter(Boolean).join(" ve ");
+    const summary = !placed
       ? ""
-      : `${r.placed} resim senaryodan yerleştirildi` +
+      : `${what} senaryodan yerleştirildi` +
         (!r.approx.length ? "" : willRefine ? ` (${r.approx.length} tanesinin yeri AI ile bulunuyor)` : ` (${r.approx.length} tanesinin yeri yaklaşık, kontrol et)`);
     const refine = async () => {
       if (!willRefine) return;
@@ -274,21 +298,21 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
         const { moves, failed } = await refineWithAI(r.doc, editorDoc, meta, r.approx, r.ids, settings, (done, total) => alive.current && setPlacing({ done, total }));
         if (!alive.current) return;
         if (moves.size) onPatchTimed((d) => ({ ...d, items: applyMoves(d.items, moves) }));
-        if (failed) onToast(`AI ${moves.size} resmin yerini buldu; ${failed} tanesi yaklaşık kaldı (kesik çerçeveli), sürükleyerek düzeltebilirsin`);
-        else onToast(`AI ${moves.size} resmin yerini buldu`);
+        if (failed) onToast(`AI ${moves.size} ekin yerini buldu; ${failed} tanesi yaklaşık kaldı (kesik çerçeveli), sürükleyerek düzeltebilirsin`);
+        else onToast(`AI ${moves.size} ekin yerini buldu`);
       } finally {
         if (alive.current) setPlacing(null);
       }
     };
-    return { doc: r.doc, placed: r.placed, summary, refine };
+    return { doc: r.doc, placed, summary, refine };
   };
 
-  /** Senaryodaki resimleri mevcut zamanlı metne yeniden yerleştirir (senaryoya sonradan resim eklendiyse). */
-  const replaceImages = () => {
+  /** Senaryodaki resim ve notları mevcut zamanlı metne yeniden yerleştirir (senaryoya sonradan eklendiyse). */
+  const replaceAtts = () => {
     if (!project.timed) return;
-    const r = placeImages(project.timed);
+    const r = placeAtts(project.timed);
     if (!r.placed) {
-      onToast("Senaryoda yerleştirilecek resim yok", "error");
+      onToast("Senaryoda yerleştirilecek resim ya da not yok", "error");
       return;
     }
     onTimedChange(r.doc);
@@ -303,7 +327,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       const r = await api.transcribeMedia(path, settings.sttLanguage);
       if (!alive.current) return;
       if (!r.words.length) throw new Error("Konuşma bulunamadı");
-      const placed = placeImages(buildTimed(r.words, name, r.language || "?"));
+      const placed = placeAtts(buildTimed(r.words, name, r.language || "?"));
       const doc = placed.doc;
       onTimedChange(doc);
       onTab("timed");
@@ -355,14 +379,14 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
           <span className="pane-title">Senaryo</span>
         )}
         <span className="spacer" />
-        {timedTab && editorPaths.current.size > 0 && (
+        {timedTab && editorAtts.current && (
           <button
             className="btn small"
-            onClick={replaceImages}
+            onClick={replaceAtts}
             disabled={!!checking || !!busy || !!placing}
-            title="Senaryodaki resimleri, söylendikleri yere göre zamanlı metne yeniden yerleştir (senaryodan gelen resimlerin konumu sıfırlanır; elle eklediklerin kalır)"
+            title="Senaryodaki resimleri ve AI notlarını, söylendikleri yere göre zamanlı metne yeniden yerleştir (senaryodan gelenlerin konumu sıfırlanır; zamanlı metne elle eklediklerin kalır)"
           >
-            🖼 Resimleri yerleştir
+            🖼 Resim ve notları yerleştir
           </button>
         )}
         {timedTab && (
@@ -392,7 +416,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       )}
       {placing && (
         <div className="banner busy">
-          <span>✦ AI senaryodaki resimlerin yerini buluyor… ({placing.done}/{placing.total})</span>
+          <span>✦ AI senaryodaki resim ve notların yerini buluyor… ({placing.done}/{placing.total})</span>
         </div>
       )}
       {checking && (
@@ -417,16 +441,24 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
         />
       )}
       {pick && (
-        <button
-          className="pron-pick"
-          style={{ left: clampX(pick.x), top: pick.y - 8 }}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => play(pick.text)}
-          title="Seçili metni dinle"
-          aria-label="Seçili metni dinle"
-        >
-          <SpeakIcon />
-        </button>
+        <div className="pick-bar" style={{ left: clampX(pick.x), top: pick.y - 8 }} onMouseDown={(e) => e.preventDefault()}>
+          {pick.speak && (
+            <button className="pick-speak" onClick={() => play(pick.text)} title="Seçili metni dinle" aria-label="Seçili metni dinle">
+              <SpeakIcon />
+            </button>
+          )}
+          <button
+            className={"pick-note" + (pick.note ? " on" : "")}
+            onClick={() => toggleNote(pick.note)}
+            title={
+              pick.note
+                ? "Not işaretini kaldır: metin yeniden seslendirilecek senaryo metni olur"
+                : "AI notuna çevir (Ctrl+Shift+N): seslendirilmez; zamanlı metne ilgili yere not olarak konur ve AI'a not olarak gider"
+            }
+          >
+            {pick.note ? "Notu kaldır" : "Nota çevir"}
+          </button>
+        </div>
       )}
       {openPath && (
         <ImageViewer
@@ -439,7 +471,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       {replacePath && (
         <ConfirmDialog
           title="Zamanlı metin değişecek"
-          message="Bu projedeki mevcut zamanlı metin, buradaki notlar ve elle eklenen resimler kaldırılacak; senaryodaki resimler yeni kayda göre yeniden yerleştirilir. Devam edilsin mi?"
+          message="Bu projedeki mevcut zamanlı metin, buradaki elle eklenen notlar ve resimler kaldırılacak; senaryodaki resim ve notlar yeni kayda göre yeniden yerleştirilir. Devam edilsin mi?"
           confirmLabel="Yeni dosyayla değiştir"
           danger
           onConfirm={() => {

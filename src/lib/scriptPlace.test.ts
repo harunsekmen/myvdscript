@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTimed, exportTimed } from "./timed";
-import { alignWords, applyMoves, buildPlaceRequest, fold, groupApprox, parsePlaceReply, placeScriptImages, scriptTokens } from "./scriptImages";
+import { alignWords, applyMoves, buildPlaceRequest, fold, groupApprox, parsePlaceReply, placeScriptItems, scriptTokens } from "./scriptPlace";
 import type { TimedDoc, TimedItem } from "./types";
 
 const P = (...content: any[]) => ({ type: "paragraph", content });
@@ -45,9 +45,9 @@ describe("scriptTokens", () => {
     );
     const t = scriptTokens(doc, { "b.png": { name: "Grafik", note: "" } });
     expect(t.words).toEqual(["Giriş", "Merhaba", "dostlar.", "ilk", "madde"]);
-    expect(t.images).toEqual([
-      { pos: 3, path: "a.png", name: "a.png", tail: true },
-      { pos: 3, path: "b.png", name: "Grafik" },
+    expect(t.atts).toEqual([
+      { kind: "img", pos: 3, path: "a.png", name: "a.png", tail: true },
+      { kind: "img", pos: 3, path: "b.png", name: "Grafik" },
     ]);
   });
 });
@@ -82,8 +82,8 @@ describe("placeScriptImages", () => {
     const doc = spoken(
       "evet merhaba bugün sizlere yapay zekanın tarihini anlatacağım ıı her şey alan turing ile başladı ve makineler düşünebilir mi diye sordu sonra derin öğrenme geldi şey bugün ise dil modelleri her yerde",
     );
-    const r = placeScriptImages(doc, script);
-    expect(r.placed).toBe(2);
+    const r = placeScriptItems(doc, script);
+    expect(r.images).toBe(2);
     expect(r.approx).toEqual([]);
     expect(where(r.doc.items)).toEqual({ "turing.png": "her", "grafik.png": "şey" });
     // grafik.png, "geldi" kelimesinin arkasına bağlıdır (dolgu "şey"den önce)
@@ -97,8 +97,8 @@ describe("placeScriptImages", () => {
   it("yeniden çalıştırınca eski senaryo resimlerini kaldırır, elle eklenenlere dokunmaz", () => {
     const doc = spoken("bugün sizlere yapay zekanın tarihini anlatacağım her şey alan turing ile başladı");
     doc.items.splice(2, 0, { k: "img", id: "m", path: "elle.png", name: "elle" });
-    const once = placeScriptImages(doc, script).doc;
-    const twice = placeScriptImages(once, script).doc;
+    const once = placeScriptItems(doc, script).doc;
+    const twice = placeScriptItems(once, script).doc;
     const imgs = twice.items.filter((i) => i.k === "img").map((i) => (i.k === "img" ? i.path : ""));
     expect(imgs.sort()).toEqual(["elle.png", "grafik.png", "turing.png"]);
   });
@@ -106,13 +106,13 @@ describe("placeScriptImages", () => {
   it("konuşma senaryodan saparsa resmi yaklaşık işaretler", () => {
     const s = DOC(P(T("ilk cümle burada bitiyor tamam")), P(IMG("x.png"), T("tamamen başka şeyler yazdım ama hiç okumadım")));
     const doc = spoken("ilk cümle burada bitiyor tamam sonra aklıma gelenleri anlattım uzun uzun durmadan");
-    const r = placeScriptImages(doc, s);
-    expect(r.placed).toBe(1);
+    const r = placeScriptItems(doc, s);
+    expect(r.images).toBe(1);
     // önceki cümle eşleştiği için arkasına kesin konur
     expect(r.approx).toEqual([]);
     expect(where(r.doc.items)["x.png"]).toBe("sonra");
 
-    const r2 = placeScriptImages(spoken("hiç alakası olmayan bambaşka bir konuşma yaptım bugün"), s);
+    const r2 = placeScriptItems(spoken("hiç alakası olmayan bambaşka bir konuşma yaptım bugün"), s);
     expect(r2.approx.length).toBe(1);
     const img = r2.doc.items.find((i) => i.k === "img");
     expect(img?.k === "img" && img.approx).toBe(true);
@@ -120,13 +120,13 @@ describe("placeScriptImages", () => {
 
   it("resim yoksa ya da kelime yoksa belgeye dokunmaz", () => {
     const doc = spoken("merhaba dünya");
-    expect(placeScriptImages(doc, DOC(P(T("merhaba dünya")))).placed).toBe(0);
-    expect(placeScriptImages({ source: "x", lang: "tr", items: [] }, script).placed).toBe(0);
+    expect(placeScriptItems(doc, DOC(P(T("merhaba dünya")))).images).toBe(0);
+    expect(placeScriptItems({ source: "x", lang: "tr", items: [] }, script).images).toBe(0);
   });
 
   it("dışa aktarmada resim zamanıyla görünür", () => {
     const doc = spoken("bugün sizlere yapay zekanın tarihini anlatacağım her şey alan turing ile başladı");
-    const r = placeScriptImages(doc, script);
+    const r = placeScriptItems(doc, script);
     const out = exportTimed(r.doc, { "turing.png": { name: "Turing", note: "Turing'in fotoğrafı" } }, "markdown");
     expect(out).toContain("[RESİM @00:03.00]: turing.png (turing.png)");
     expect(out).toContain("[RESİM NOTU]: Turing'in fotoğrafı");
@@ -137,12 +137,12 @@ describe("AI ile yerleştirme", () => {
   it("istek senaryo bağlamını, resim notunu ve numaralı kelimeleri içerir", () => {
     const s = DOC(P(T("önce bu")), P(IMG("x.png", "Harita"), T("sonra şu")));
     const doc = spoken("alakasız bir konuşma");
-    const r = placeScriptImages(doc, s);
+    const r = placeScriptItems(doc, s);
     const words = doc.items.filter((i) => i.k === "w").map((w, i) => ({ n: i + 1, w: w.k === "w" ? w.w : "", s: w.k === "w" ? w.s : 0 }));
     const [g] = groupApprox(r.approx, words.length);
     const req = buildPlaceRequest(g, scriptTokens(s), words, { "x.png": { name: "Harita", note: "Türkiye haritası" } });
     expect(req).toContain("önce bu ⟦RESİM 1⟧ sonra şu");
-    expect(req).toContain("RESİM 1: Harita — not: Türkiye haritası");
+    expect(req).toContain("RESİM 1: Harita — resim notu: Türkiye haritası");
     expect(req).toContain("1 [00:00.0] alakasız");
   });
 
@@ -163,5 +163,54 @@ describe("AI ile yerleştirme", () => {
     expect(applyMoves(items, new Map([["r", "yok"]]))).toBe(items);
     void a;
     void c;
+  });
+});
+
+describe("AI notları", () => {
+  const N = (text: string) => ({ type: "text", text, marks: [{ type: "scriptNote" }] });
+
+  it("not işaretli metin kelimelere katılmaz, bulunduğu yerde not olur; parçalar birleşir", () => {
+    const doc = DOC(P(T("Merhaba dostlar. "), N("burada "), { type: "text", text: "logo", marks: [{ type: "scriptNote" }, { type: "bold" }] }, T(" bugün başlıyoruz")));
+    const t = scriptTokens(doc);
+    expect(t.words).toEqual(["Merhaba", "dostlar.", "bugün", "başlıyoruz"]);
+    expect(t.atts).toEqual([{ kind: "note", pos: 2, text: "burada logo" }]);
+  });
+
+  it("not, ilgili yere zamanlı metinde not öğesi olarak konur; yeniden çalıştırınca çoğalmaz", () => {
+    const script = DOC(
+      P(T("Bugün sizlere yapay zekanın tarihini anlatacağım."), N("burada intro müziği kısılsın")),
+      P(N("Bu bölümde arşiv görüntüleri kullan"), T("Her şey Alan Turing ile başladı ve makineler düşünebilir mi diye sordu.")),
+    );
+    const doc = spoken("bugün sizlere yapay zekanın tarihini anlatacağım ıı her şey alan turing ile başladı ve makineler düşünebilir mi diye sordu");
+    const r = placeScriptItems(doc, script);
+    expect(r.notes).toBe(2);
+    expect(r.images).toBe(0);
+    const items = r.doc.items;
+    const notes = items.filter((i) => i.k === "note");
+    expect(notes.map((n) => n.k === "note" && n.text)).toEqual(["burada intro müziği kısılsın", "Bu bölümde arşiv görüntüleri kullan"]);
+    // paragraf sonundaki not önceki kelimeye ("anlatacağım") bağlanır, ikincisi "her"in önüne
+    const i1 = items.findIndex((i) => i.k === "note");
+    const prev = items[i1 - 1];
+    expect(prev.k === "w" && prev.w).toBe("anlatacağım");
+    const i2 = items.findIndex((i, k) => i.k === "note" && k > i1);
+    const next = items[i2 + 1];
+    expect(next.k === "w" && next.w).toBe("her");
+    // elle eklenen nota dokunulmaz
+    const withManual: TimedDoc = { ...r.doc, items: [{ k: "note", id: "m", text: "elle" }, ...r.doc.items] };
+    const again = placeScriptItems(withManual, script).doc.items.filter((i) => i.k === "note");
+    expect(again.length).toBe(3);
+    const out = exportTimed(r.doc, {}, "markdown");
+    expect(out).toContain("[NOT @00:03.00]: burada intro müziği kısılsın");
+  });
+
+  it("AI isteğinde not işareti ve metni yer alır", () => {
+    const s = DOC(P(T("önce bu")), P(N("arka planda harita"), T("sonra şu")));
+    const doc = spoken("alakasız bir konuşma");
+    const r = placeScriptItems(doc, s);
+    const words = doc.items.filter((i) => i.k === "w").map((w, i) => ({ n: i + 1, w: w.k === "w" ? w.w : "", s: w.k === "w" ? w.s : 0 }));
+    const [g] = groupApprox(r.approx, words.length);
+    const req = buildPlaceRequest(g, scriptTokens(s), words, {});
+    expect(req).toContain("önce bu ⟦NOT 1⟧ sonra şu");
+    expect(req).toContain("NOT 1: arka planda harita");
   });
 });

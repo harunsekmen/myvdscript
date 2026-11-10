@@ -3,66 +3,105 @@ import { fmtTime, newId, wordNumbers } from "./timed";
 import type { ImageMeta, Settings, TimedDoc, TimedItem } from "./types";
 
 /**
- * Senaryodaki (elle yazılan metin) resimleri, seslendirmeden çıkan zamanlı metne yerleştirir.
+ * Senaryodaki (elle yazılan metin) resimleri ve AI notlarını, seslendirmeden çıkan zamanlı metne yerleştirir.
+ * AI notu: senaryoda seçilip nota çevrilen metin (scriptNote işareti); seslendirilmez, AI'a bilgi olarak gider.
  *
  * 1) Senaryo kelimeleri ile konuşmadaki kelimeler hizalanır (yarı-global dizi hizalama; baştaki/sondaki
  *    fazlalıklar ücretsiz, dolgu/tekrar/sapmalar boşluk olarak geçer). Aynı cümle iki kez söylendiyse
  *    son okuma tercih edilir (genelde temiz olan odur).
- * 2) Her resim, senaryoda kendisinden sonra gelen kelimenin konuşmada söylendiği yere konur; o kelime
- *    eşleşmediyse en yakın eşleşen komşuya göre. Çevresi iyi eşleşmeyen resim "yaklaşık" işaretlenir.
- * 3) Yaklaşık resimler için (model seçiliyse) AI'a senaryodaki çevresi ve konuşmanın ilgili bölümü
+ * 2) Her ek, senaryoda kendisinden sonra gelen kelimenin konuşmada söylendiği yere konur (paragraf sonundaysa
+ *    önceki kelimenin arkasına). Çevresi iyi eşleşmeyen ek "yaklaşık" işaretlenir.
+ * 3) Yaklaşık ekler için (model seçiliyse) AI'a senaryodaki çevresi ve konuşmanın ilgili bölümü
  *    gönderilip doğru kelime sorulur.
  */
 
-type ImgItem = Extract<TimedItem, { k: "img" }>;
+type AttItem = Extract<TimedItem, { k: "img" } | { k: "note" }>;
+
+/** Senaryoda AI notu olarak işaretlenen metnin TipTap işaret adı. */
+export const NOTE_MARK = "scriptNote";
 
 interface PMNode {
   type: string;
   attrs?: Record<string, any>;
   content?: PMNode[];
   text?: string;
+  marks?: { type: string }[];
 }
 
-export interface ScriptImage {
-  /** Senaryoda resimden sonra gelen ilk kelimenin sırası (resim bu kelimenin önündedir). */
+/** Senaryodaki bir ek: resim ya da AI notu. */
+export interface ScriptAtt {
+  kind: "img" | "note";
+  /** Senaryoda ekten sonra gelen ilk kelimenin sırası (ek bu kelimenin önündedir). */
   pos: number;
-  path: string;
-  name: string;
+  /** Resim için */
+  path?: string;
+  name?: string;
+  /** Not için */
+  text?: string;
   /** Paragrafın sonunda (önünde metin var, arkasında yok): önceki cümleye aittir. */
   tail?: boolean;
 }
 
 export interface ScriptTokens {
   words: string[];
-  images: ScriptImage[];
+  atts: ScriptAtt[];
 }
 
-/** Senaryo (TipTap JSON) içindeki kelimeleri ve resimlerin kelime dizisindeki yerlerini çıkarır. */
+const isNoteText = (n: PMNode) => n.type === "text" && !!n.marks?.some((m) => m.type === NOTE_MARK);
+
+/**
+ * Senaryo (TipTap JSON) içindeki seslendirilecek kelimeleri ve eklerin (resim, AI notu) kelime dizisindeki yerlerini
+ * çıkarır. Not olarak işaretli metin kelimelere katılmaz; art arda gelen not parçaları tek nota birleşir.
+ */
 export function scriptTokens(doc: any, meta: Record<string, ImageMeta> = {}): ScriptTokens {
   const words: string[] = [];
-  const images: ScriptImage[] = [];
+  const atts: ScriptAtt[] = [];
+  let note: string | null = null;
+  const flushNote = () => {
+    const text = note?.replace(/\s+/g, " ").trim();
+    if (text) atts.push({ kind: "note", pos: words.length, text });
+    note = null;
+  };
   const walk = (n: PMNode | undefined) => {
     if (!n) return;
+    if (isNoteText(n)) {
+      note = (note ?? "") + (n.text ?? "");
+      return;
+    }
+    if (n.type === "hardBreak" && note !== null) {
+      note += " ";
+      return;
+    }
+    flushNote();
     if (n.type === "text") {
       for (const w of (n.text ?? "").split(/\s+/)) if (fold(w)) words.push(w);
       return;
     }
     if (n.type === "imageChip") {
       const path: string = n.attrs?.path ?? "";
-      if (path) images.push({ pos: words.length, path, name: meta[path]?.name || n.attrs?.name || "resim" });
+      if (path) atts.push({ kind: "img", pos: words.length, path, name: meta[path]?.name || n.attrs?.name || "resim" });
       return;
     }
     if (n.type === "paragraph" || n.type === "heading") {
       const start = words.length;
-      const first = images.length;
+      const first = atts.length;
       n.content?.forEach(walk);
-      for (const img of images.slice(first)) if (img.pos === words.length && img.pos > start) img.tail = true;
+      flushNote();
+      for (const a of atts.slice(first)) if (a.pos === words.length && a.pos > start) a.tail = true;
       return;
     }
     n.content?.forEach(walk);
   };
   walk(doc as PMNode);
-  return { words, images };
+  flushNote();
+  return { words, atts };
+}
+
+/** Senaryoda zamanlı metne yerleştirilecek ek (resim ya da AI notu) var mı? Hızlı tarama. */
+export function hasScriptAtts(doc: any): boolean {
+  const walk = (n: PMNode | undefined): boolean =>
+    !!n && (n.type === "imageChip" || (isNoteText(n) && !!n.text?.trim()) || !!n.content?.some(walk));
+  return walk(doc as PMNode);
 }
 
 /** Karşılaştırma için kelime: Türkçe küçük harf, aksansız, yalnızca harf/rakam. */
@@ -78,7 +117,7 @@ export function fold(w: string): string {
 const EXACT = 3;
 const STEM = 2; // Türkçe ekler: ilk 5 harf aynıysa yakın kelime sayılır ("videoda" ~ "videodaki")
 const GAP = 1;
-/** Bu kadar hücreyi aşan hizalama yapılmaz (bellek/süre); resimler orantılı yerleşir, AI düzeltir. */
+/** Bu kadar hücreyi aşan hizalama yapılmaz (bellek/süre); ekler orantılı yerleşir, AI düzeltir. */
 const MAX_CELLS = 40_000_000;
 
 /**
@@ -176,10 +215,10 @@ export function alignWords(script: string[], spoken: string[]): Int32Array {
 }
 
 export interface Placement {
-  img: ScriptImage;
+  att: ScriptAtt;
   /** Konuşmadaki kelime sırası (wordNumbers dizinine göre) */
   word: number;
-  /** "before": resim bu kelimenin önüne; "after": bu kelimenin arkasına */
+  /** "before": ek bu kelimenin önüne; "after": bu kelimenin arkasına */
   side: "before" | "after";
   approx: boolean;
   /** AI'a gönderilecek konuşma aralığı (kelime sırası, dahil) */
@@ -190,14 +229,14 @@ const NEAR = 2; // eşleşen komşu en fazla bu kadar kelime uzaktaysa konum kes
 const SUPPORT_SPAN = 6;
 const SUPPORT_MIN = 3;
 
-/** Hizalamadan her resmin konuşmadaki yerini çıkarır. */
+/** Hizalamadan her ekin konuşmadaki yerini çıkarır. */
 export function planPlacements(tokens: ScriptTokens, spokenCount: number, match: Int32Array): Placement[] {
   const S = tokens.words.length;
   const T = spokenCount;
   if (!T) return [];
   const clamp = (n: number) => Math.max(0, Math.min(T - 1, n));
-  return tokens.images.map((img) => {
-    const p = img.pos;
+  return tokens.atts.map((att) => {
+    const p = att.pos;
     let kn = -1;
     for (let k = p; k < S; k++) if (match[k] >= 0) { kn = k; break; }
     let kp = -1;
@@ -215,10 +254,10 @@ export function planPlacements(tokens: ScriptTokens, spokenCount: number, match:
     const tp = kp >= 0 ? match[kp] : -1;
     const win: [number, number] = [tp >= 0 ? tp : 0, tn >= 0 ? tn : T - 1];
 
-    // Paragraf sonundaki resim önceki cümleye bağlanır; diğerleri sonraki cümlenin başına
-    if (img.tail && prevOk) return { img, word: tp, side: "after", approx: false, win };
-    if (nextOk && (dn === 0 || !prevOk || dn <= dp)) return { img, word: tn, side: "before", approx: false, win };
-    if (prevOk) return { img, word: tp, side: "after", approx: false, win };
+    // Paragraf sonundaki ek önceki cümleye bağlanır; diğerleri sonraki cümlenin başına
+    if (att.tail && prevOk) return { att, word: tp, side: "after", approx: false, win };
+    if (nextOk && (dn === 0 || !prevOk || dn <= dp)) return { att, word: tn, side: "before", approx: false, win };
+    if (prevOk) return { att, word: tp, side: "after", approx: false, win };
 
     // Yaklaşık konum: iki komşu eşleşme arasında senaryodaki orana göre
     let word: number;
@@ -226,33 +265,44 @@ export function planPlacements(tokens: ScriptTokens, spokenCount: number, match:
     else if (tn >= 0) word = tn - dn;
     else if (tp >= 0) word = tp + dp + 1;
     else word = S ? Math.round((p / S) * T) : 0;
-    if (word >= T) return { img, word: T - 1, side: "after", approx: true, win };
-    return { img, word: clamp(word), side: "before", approx: true, win };
+    if (word >= T) return { att, word: T - 1, side: "after", approx: true, win };
+    return { att, word: clamp(word), side: "before", approx: true, win };
   });
 }
 
+export interface PlaceResult {
+  doc: TimedDoc;
+  images: number;
+  notes: number;
+  approx: Placement[];
+  ids: Map<Placement, string>;
+}
+
 /**
- * Senaryodaki resimleri zamanlı metne yerleştirir. Daha önce senaryodan yerleştirilmiş resimler (ya da senaryodaki
- * bir resimle aynı dosya) kaldırılıp yeniden konur; kullanıcının zamanlı metne kendi eklediği resimlere dokunulmaz.
+ * Senaryodaki resimleri ve AI notlarını zamanlı metne yerleştirir. Daha önce senaryodan yerleştirilmiş ekler (ya da
+ * senaryodaki bir resimle aynı dosya) kaldırılıp yeniden konur; kullanıcının zamanlı metne kendi eklediklerine dokunulmaz.
  */
-export function placeScriptImages(
-  doc: TimedDoc,
-  editorDoc: any,
-  meta: Record<string, ImageMeta> = {},
-): { doc: TimedDoc; placed: number; approx: Placement[]; ids: Map<Placement, string> } {
+export function placeScriptItems(doc: TimedDoc, editorDoc: any, meta: Record<string, ImageMeta> = {}): PlaceResult {
   const tokens = scriptTokens(editorDoc, meta);
-  const paths = new Set(tokens.images.map((i) => i.path));
-  const base = doc.items.filter((it) => !(it.k === "img" && (it.from === "script" || paths.has(it.path))));
+  const paths = new Set(tokens.atts.map((a) => a.path).filter(Boolean));
+  const base = doc.items.filter(
+    (it) => !((it.k === "img" && (it.from === "script" || paths.has(it.path))) || (it.k === "note" && it.from === "script")),
+  );
   const words = wordNumbers(base);
-  if (!tokens.images.length || !words.length) return { doc: { ...doc, items: base }, placed: 0, approx: [], ids: new Map() };
+  if (!tokens.atts.length || !words.length) return { doc: { ...doc, items: base }, images: 0, notes: 0, approx: [], ids: new Map() };
 
   const match = alignWords(tokens.words, words.map((w) => w.w));
   const plans = planPlacements(tokens, words.length, match);
-  const before = new Map<string, ImgItem[]>();
-  const after = new Map<string, ImgItem[]>();
+  const before = new Map<string, AttItem[]>();
+  const after = new Map<string, AttItem[]>();
   const ids = new Map<Placement, string>();
   for (const pl of plans) {
-    const item: ImgItem = { k: "img", id: newId(), path: pl.img.path, name: pl.img.name, from: "script", ...(pl.approx ? { approx: true } : {}) };
+    const flags = { from: "script" as const, ...(pl.approx ? { approx: true } : {}) };
+    const a = pl.att;
+    const item: AttItem =
+      a.kind === "img"
+        ? { k: "img", id: newId(), path: a.path ?? "", name: a.name ?? "resim", ...flags }
+        : { k: "note", id: newId(), text: a.text ?? "", ...flags };
     ids.set(pl, item.id);
     const key = words[pl.word].id;
     const m = pl.side === "before" ? before : after;
@@ -263,24 +313,22 @@ export function placeScriptImages(
     if (it.k === "w") items.push(...(before.get(it.id) ?? []), it, ...(after.get(it.id) ?? []));
     else items.push(it);
   }
-  return { doc: { ...doc, items }, placed: plans.length, approx: plans.filter((p) => p.approx), ids };
+  const images = plans.filter((p) => p.att.kind === "img").length;
+  return { doc: { ...doc, items }, images, notes: plans.length - images, approx: plans.filter((p) => p.approx), ids };
 }
 
-/** Senaryoda resim var mı? */
-export const scriptHasImages = (editorDoc: any) => scriptTokens(editorDoc).images.length > 0;
-
 // ---------------------------------------------------------------------------------------------------------------
-// AI ile yaklaşık resimlerin yerini bulma
+// AI ile yaklaşık eklerin yerini bulma
 
-export const IMAGE_PLACE_PROMPT = `Sen bir video kurgu asistanısın. Yazar bir senaryo yazdı ve içine resimler ekledi; sonra senaryoyu seslendirdi ve konuşma kelime kelime zamanlı yazıya çevrildi. Görevin: her resmin, konuşmada hangi kelimeden itibaren ekranda gösterilmesi gerektiğini bulmak.
+export const PLACE_PROMPT = `Sen bir video kurgu asistanısın. Yazar bir senaryo yazdı; içine resimler ve kendisi için notlar ekledi (notlar seslendirilmez). Sonra senaryoyu seslendirdi ve konuşma kelime kelime zamanlı yazıya çevrildi. Görevin: her ekin konuşmada hangi kelimenin önüne düştüğünü bulmak.
 
-Senaryoda ⟦RESİM k⟧ işareti resmin yeridir: resim, işaretten hemen sonraki senaryo metni söylenmeye başladığında gösterilir (işaret paragrafın sonundaysa, önündeki metnin hemen arkası). Konuşmada aynı yeri bul. Yazar senaryodan sapmış, cümleleri farklı söylemiş, tekrar etmiş ya da dolgu sesleri eklemiş olabilir; anlamca eşleştir. Bir cümle birden çok kez söylendiyse son (tamamlanmış) söyleyişi seç. Resim adı ve notu varsa ipucu olarak kullan.
+Senaryoda ⟦RESİM k⟧ ve ⟦NOT k⟧ işaretleri eklerin yeridir: ek, işaretten hemen sonraki senaryo metninin söylenmeye başladığı yere aittir (işaret paragrafın sonundaysa, önündeki metnin hemen arkası). Resim o anda ekranda gösterilir; not o kısımla ilgili yazar açıklamasıdır. Konuşmada aynı yeri bul. Yazar senaryodan sapmış, cümleleri farklı söylemiş, tekrar etmiş ya da dolgu sesleri eklemiş olabilir; anlamca eşleştir. Bir cümle birden çok kez söylendiyse son (tamamlanmış) söyleyişi seç. Resim adı/notu ve not metni ipucu olarak kullanılabilir.
 
 Konuşma kelimeleri \`numara [dakika:saniye.salise] kelime\` biçimindedir. Yalnızca JSON döndür, açıklama yazma:
-{"images":[{"k":1,"n":123}]}
-n: resmin gösterilmeye başlayacağı kelimenin numarası (verilen numaralardan biri). Konuşmada hiç karşılığı yoksa en yakın anlamlı yeri seç.`;
+{"items":[{"k":1,"n":123}]}
+k: ekin numarası, n: ekin önüne düştüğü kelimenin numarası (verilen numaralardan biri). Konuşmada hiç karşılığı yoksa en yakın anlamlı yeri seç.`;
 
-const SCRIPT_CONTEXT = 60; // resmin iki yanında gönderilecek senaryo kelimesi
+const SCRIPT_CONTEXT = 60; // ekin iki yanında gönderilecek senaryo kelimesi
 const WIN_PAD = 25;
 const MAX_WIN = 1500; // tek istekte gönderilecek en fazla konuşma kelimesi
 
@@ -290,10 +338,10 @@ interface Group {
   to: number;
 }
 
-/** Yaklaşık resimleri, konuşma aralıkları örtüşenleri tek istekte toplayarak gruplar. */
+/** Yaklaşık ekleri, konuşma aralıkları örtüşenleri tek istekte toplayarak gruplar. */
 export function groupApprox(approx: Placement[], spokenCount: number): Group[] {
   const groups: Group[] = [];
-  const sorted = [...approx].sort((a, b) => a.img.pos - b.img.pos);
+  const sorted = [...approx].sort((a, b) => a.att.pos - b.att.pos);
   for (const pl of sorted) {
     let from = Math.max(0, pl.win[0] - WIN_PAD);
     let to = Math.min(spokenCount - 1, pl.win[1] + WIN_PAD);
@@ -311,30 +359,32 @@ export function groupApprox(approx: Placement[], spokenCount: number): Group[] {
   return groups;
 }
 
-/** Bir grup için AI'a gidecek kullanıcı mesajı. Resimler grupta 1'den numaralanır. */
+/** Bir grup için AI'a gidecek kullanıcı mesajı. Ekler grupta 1'den numaralanır. */
 export function buildPlaceRequest(group: Group, tokens: ScriptTokens, spoken: { n: number; w: string; s: number }[], meta: Record<string, ImageMeta>): string {
-  const first = group.plans[0].img.pos;
-  const last = group.plans[group.plans.length - 1].img.pos;
+  const first = group.plans[0].att.pos;
+  const last = group.plans[group.plans.length - 1].att.pos;
   const a = Math.max(0, first - SCRIPT_CONTEXT);
   const b = Math.min(tokens.words.length, last + SCRIPT_CONTEXT);
-  const marks = new Map<number, number[]>();
-  group.plans.forEach((pl, i) => marks.set(pl.img.pos, [...(marks.get(pl.img.pos) ?? []), i + 1]));
+  const label = (pl: Placement) => (pl.att.kind === "img" ? "RESİM" : "NOT");
+  const marks = new Map<number, string[]>();
+  group.plans.forEach((pl, i) => marks.set(pl.att.pos, [...(marks.get(pl.att.pos) ?? []), `⟦${label(pl)} ${i + 1}⟧`]));
   const parts: string[] = [];
   if (a > 0) parts.push("…");
   for (let k = a; k <= b; k++) {
-    for (const n of marks.get(k) ?? []) parts.push(`⟦RESİM ${n}⟧`);
+    parts.push(...(marks.get(k) ?? []));
     if (k < b) parts.push(tokens.words[k]);
   }
   if (b < tokens.words.length) parts.push("…");
   const info = group.plans.map((pl, i) => {
-    const note = meta[pl.img.path]?.note?.replace(/\s+/g, " ").trim();
-    return `RESİM ${i + 1}: ${pl.img.name}${note ? ` — not: ${note}` : ""}`;
+    if (pl.att.kind === "note") return `NOT ${i + 1}: ${pl.att.text}`;
+    const note = meta[pl.att.path ?? ""]?.note?.replace(/\s+/g, " ").trim();
+    return `RESİM ${i + 1}: ${pl.att.name}${note ? ` — resim notu: ${note}` : ""}`;
   });
   const lines = spoken.slice(group.from, group.to + 1).map((w) => `${w.n} [${fmtTime(w.s, 1)}] ${w.w}`);
-  return `Senaryo (ilgili kısım):\n${parts.join(" ")}\n\nResimler:\n${info.join("\n")}\n\nKonuşma kelimeleri:\n${lines.join("\n")}`;
+  return `Senaryo (ilgili kısım):\n${parts.join(" ")}\n\nEkler:\n${info.join("\n")}\n\nKonuşma kelimeleri:\n${lines.join("\n")}`;
 }
 
-/** AI yanıtından resim → kelime numarası eşlemesini ayıklar; aralık dışındakiler atlanır. */
+/** AI yanıtından ek → kelime numarası eşlemesini ayıklar; aralık dışındakiler atlanır. */
 export function parsePlaceReply(text: string, count: number, minN: number, maxN: number): Map<number, number> {
   const out = new Map<number, number>();
   const start = text.indexOf("{");
@@ -342,7 +392,8 @@ export function parsePlaceReply(text: string, count: number, minN: number, maxN:
   if (start < 0 || end <= start) return out;
   let list: unknown;
   try {
-    list = (JSON.parse(text.slice(start, end + 1)) as { images?: unknown }).images;
+    const obj = JSON.parse(text.slice(start, end + 1)) as { items?: unknown; images?: unknown };
+    list = obj.items ?? obj.images;
   } catch {
     return out;
   }
@@ -357,8 +408,8 @@ export function parsePlaceReply(text: string, count: number, minN: number, maxN:
 }
 
 /**
- * Yaklaşık yerleşen resimleri AI'a sorar. Dönen eşleme: resim öğesi kimliği → önüne konacağı kelime kimliği.
- * Bir grup başarısız olursa o gruptaki resimler yaklaşık konumda kalır.
+ * Yaklaşık yerleşen ekleri AI'a sorar. Dönen eşleme: ek öğesi kimliği → önüne konacağı kelime kimliği.
+ * Bir grup başarısız olursa o gruptaki ekler yaklaşık konumda kalır.
  */
 export async function refineWithAI(
   doc: TimedDoc,
@@ -381,16 +432,16 @@ export async function refineWithAI(
       const text = await streamChat({
         baseUrl: s.baseUrl,
         model: s.model,
-        system: IMAGE_PLACE_PROMPT,
+        system: PLACE_PROMPT,
         user: buildPlaceRequest(group, tokens, spoken, meta),
         temperature: 0,
       }).done;
       const got = parsePlaceReply(text, group.plans.length, spoken[group.from].n, spoken[group.to].n);
       group.plans.forEach((pl, i) => {
         const n = got.get(i + 1);
-        const imgId = ids.get(pl);
-        if (n === undefined || !imgId) return void failed++;
-        moves.set(imgId, spoken[n - 1].id);
+        const itemId = ids.get(pl);
+        if (n === undefined || !itemId) return void failed++;
+        moves.set(itemId, spoken[n - 1].id);
       });
     } catch {
       failed += group.plans.length;
@@ -400,23 +451,23 @@ export async function refineWithAI(
   return { moves, failed };
 }
 
-/** Resimleri verilen kelimelerin önüne taşır ve "yaklaşık" işaretini kaldırır. Silinmiş resim/kelime atlanır. */
+/** Ekleri (resim/not) verilen kelimelerin önüne taşır ve "yaklaşık" işaretini kaldırır. Silinmiş ek/kelime atlanır. */
 export function applyMoves(items: TimedItem[], moves: Map<string, string>): TimedItem[] {
   const words = new Set(items.filter((i) => i.k === "w").map((i) => (i as { id: string }).id));
-  const moving = new Map<string, ImgItem[]>();
+  const moving = new Map<string, AttItem[]>();
   const taken = new Set<string>();
   for (const it of items) {
-    if (it.k !== "img") continue;
+    if (it.k !== "img" && it.k !== "note") continue;
     const target = moves.get(it.id);
     if (!target || !words.has(target)) continue;
     const { approx: _, ...rest } = it;
-    moving.set(target, [...(moving.get(target) ?? []), rest]);
+    moving.set(target, [...(moving.get(target) ?? []), rest as AttItem]);
     taken.add(it.id);
   }
   if (!taken.size) return items;
   const out: TimedItem[] = [];
   for (const it of items) {
-    if (it.k === "img" && taken.has(it.id)) continue;
+    if ((it.k === "img" || it.k === "note") && taken.has(it.id)) continue;
     if (it.k === "w") out.push(...(moving.get(it.id) ?? []));
     out.push(it);
   }

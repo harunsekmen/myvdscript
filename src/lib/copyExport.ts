@@ -1,3 +1,4 @@
+import { NOTE_MARK } from "./scriptPlace";
 import type { ImageMeta } from "./types";
 
 export type CopyMode = "markdown" | "text";
@@ -9,6 +10,8 @@ interface PMNode {
   text?: string;
   marks?: { type: string }[];
 }
+
+const isNote = (n: PMNode) => n.type === "text" && !!n.marks?.some((m) => m.type === NOTE_MARK);
 
 const mdPath = (p: string) => (/[\s()]/.test(p) ? `<${p}>` : p);
 
@@ -45,11 +48,28 @@ function inlineBlocks(
 ): string[] {
   const out: string[] = [];
   let buf = "";
+  // AI notu: seslendirilmeyen yazar notu. Markdown'da [NOT: …] olarak satır içinde kalır, düz metinde atlanır.
+  let note: string | null = null;
+  const endNote = () => {
+    const t = note?.replace(/\s+/g, " ").trim();
+    if (t && mode === "markdown") buf += `${buf && !/\s$/.test(buf) ? " " : ""}[NOT: ${t}]`;
+    note = null;
+  };
   const flush = () => {
-    if (buf.trim()) out.push(wrap(buf.trim()));
+    endNote();
+    if (buf.trim()) out.push(wrap(buf.trim().replace(/ {2,}/g, " ")));
     buf = "";
   };
   for (const c of content ?? []) {
+    if (isNote(c)) {
+      note = (note ?? "") + (c.text ?? "");
+      continue;
+    }
+    if (c.type === "hardBreak" && note !== null) {
+      note += " ";
+      continue;
+    }
+    endNote();
     if (c.type === "imageChip") {
       flush();
       const b = imageBlock(c, meta, mode);
@@ -96,7 +116,12 @@ function blocks(node: PMNode, meta: Record<string, ImageMeta>, mode: CopyMode, l
 
 export function exportDoc(doc: any, meta: Record<string, ImageMeta>, mode: CopyMode): string {
   if (!doc) return "";
-  return blocks(doc as PMNode, meta, mode).join("\n\n").trim() + "\n";
+  const body = blocks(doc as PMNode, meta, mode).join("\n\n").trim();
+  const head =
+    mode === "markdown" && body.includes("[NOT: ")
+      ? "(Not: \"[NOT: …]\" içindekiler seslendirilmeyecek yazar notlarıdır; anlatım metnine dahil etme, bilgi/yönerge olarak kullan.)\n\n"
+      : "";
+  return head + body + "\n";
 }
 
 export function collectImagePaths(doc: any): Set<string> {

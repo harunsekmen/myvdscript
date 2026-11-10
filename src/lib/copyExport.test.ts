@@ -33,4 +33,12 @@ describe("exportDoc", () => {
     const d = { type: "doc", content: [{ type: "paragraph", content: [{ type: "imageChip", attrs: { path: "C:\\a b\\x.png", name: "x" } }] }] };
     expect(exportDoc(d, {}, "markdown")).toBe("![x](<C:\\a b\\x.png>)\n");
   });
+  it("AI notu: markdown'da [NOT: …] olarak kalır, düz metinde atlanır", () => {
+    const N = (text: string) => ({ type: "text", text, marks: [{ type: "scriptNote" }] });
+    const d = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Merhaba " }, N("müzik gir"), { type: "text", text: " dostlar" }] }] };
+    const md = exportDoc(d, {}, "markdown");
+    expect(md).toContain("Merhaba [NOT: müzik gir] dostlar\n");
+    expect(md.startsWith("(Not:")).toBe(true);
+    expect(exportDoc(d, {}, "text")).toBe("Merhaba dostlar\n");
+  });
 });
