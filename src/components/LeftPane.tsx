@@ -5,6 +5,7 @@ import { buildInsightMessage, CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
 import { activeSource, sourceLabel } from "../lib/sources";
 import { speak } from "../lib/speech";
+import { VOICE_RECORD_EVENT } from "../lib/voice";
 import type { ChatMessage, Insight, ProcState, Project, SentenceMark, Settings } from "../lib/types";
 import { getVideoState, playAt, subscribeVideo, videoIdOf } from "../lib/youtube";
 import { ChatPanel } from "./ChatPanel";
@@ -767,9 +768,24 @@ export function LeftPane({
                 <section
                   key={seg.id}
                   className="seg"
+                  data-segid={seg.id}
                   style={{ background: st.bg }}
                 >
-                  <div className="seg-label" style={{ color: st.label }}>{seg.title}</div>
+                  <div className="seg-label" style={{ color: st.label }}>
+                    {seg.title}
+                    <button
+                      className="seg-mic"
+                      onClick={() =>
+                        window.dispatchEvent(new CustomEvent(VOICE_RECORD_EVENT, { detail: { sourceId: source.id, segmentId: seg.id, title: seg.title } }))
+                      }
+                      title="Bu bölümü kendi sözlerinle seslendir (ses kaydı başlatır)"
+                      aria-label="Bu bölüm için ses kaydı al"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3" />
+                      </svg>
+                    </button>
+                  </div>
                   {(paras.get(seg.id) ?? []).map((p, pi) => (
                     <p key={pi} data-seg={seg.id} data-para={pi} onDoubleClick={onParaDoubleClick}>
                       {renderPara(p, source.insights, onMarkClick, {

@@ -47,4 +47,12 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStage: true,
   statsSource: "ytdlp",
   homeSort: "updated",
+  voiceDeviceId: "",
+  voiceNoiseSuppression: true,
+  voiceEchoCancel: false,
+  voiceAutoGain: false,
+  voiceLanguage: "",
+  voiceAutoTranscribe: true,
+  voiceGapMs: 300,
+  voiceCountdown: 0,
 };

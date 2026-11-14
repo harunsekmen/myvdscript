@@ -79,6 +79,17 @@ export const api = {
   setYoutubeKey: (key: string) => invoke<void>("set_youtube_key", { key }),
   testYoutubeKey: () => invoke<void>("test_youtube_key"),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
+  saveVoiceTake: (projectId: string, bytes: Uint8Array, ext: string) =>
+    invoke<{ file: string }>("save_voice_take", bytes, { headers: { "x-project": projectId, "x-ext": ext } }),
+  readVoiceTake: (projectId: string, file: string) => invoke<ArrayBuffer>("read_voice_take", { projectId, file }),
+  deleteVoiceTake: (projectId: string, file: string) => invoke<void>("delete_voice_take", { projectId, file }),
+  pruneVoiceTakes: (projectId: string, keep: string[]) => invoke<number>("prune_voice_takes", { projectId, keep }),
+  transcribeVoiceTake: (projectId: string, file: string, language: string) =>
+    invoke<MediaTranscript>("transcribe_voice_take", { projectId, file, language }),
+  exportVoiceTakes: (projectId: string, files: string[], gapMs: number, outPath: string) =>
+    invoke<void>("export_voice_takes", { projectId, files, gapMs, outPath }),
+  saveBinaryFile: (path: string, bytes: Uint8Array) =>
+    invoke<void>("save_binary_file", bytes, { headers: { "x-path": encodeURIComponent(path) } }),
 };
 
 export interface StreamHandle {

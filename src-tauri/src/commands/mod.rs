@@ -8,3 +8,4 @@ pub mod stt;
 pub mod tts;
 pub mod transcript;
 pub mod videos;
+pub mod voice;

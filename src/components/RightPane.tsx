@@ -12,15 +12,17 @@ import { buildTimed, collectTimedPaths } from "../lib/timed";
 import { NOTE_MARK, applyMoves, hasScriptAtts, placeScriptItems, refineWithAI } from "../lib/scriptPlace";
 import { ScriptNote } from "./scriptNote";
 import { checkWords } from "../lib/wordCheck";
-import type { ImageMeta, Project, Settings, TimedDoc } from "../lib/types";
+import type { ImageMeta, Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
 import { MarkdownEnter } from "./mdShortcuts";
 import { ImageViewer } from "./ImageViewer";
 import { ConfirmDialog } from "./Dialogs";
 import { SpeakIcon } from "./SpeakIcon";
 import { TimedPane } from "./TimedPane";
+import { VoicePane } from "./VoicePane";
+import { fmtDur } from "../lib/voice";
 
-export type RightTab = "write" | "timed";
+export type RightTab = "write" | "timed" | "voice";
 
 interface Props {
   project: Project;
@@ -32,6 +34,7 @@ interface Props {
   onDoc: (doc: any) => void;
   onTimed: (doc: TimedDoc) => void;
   onPatchTimed: (fn: (d: TimedDoc) => TimedDoc) => void;
+  onPatchTakes: (fn: (t: VoiceTake[]) => VoiceTake[]) => void;
   onMeta: (path: string, meta: ImageMeta | null) => void;
   onToast: (msg: string, kind?: "error" | "info") => void;
   registerGetDoc: (fn: () => any) => void;
@@ -46,7 +49,7 @@ const looksLikeMarkdown = (t: string) =>
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "opus", "wma", "mpeg", "mpga", "mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "ts"];
 
-export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
+export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   // Seçim balonu: dinle (kısa seçimlerde) ve AI notuna çevir/notu kaldır
   const [pick, setPick] = useState<{ text: string; x: number; y: number; speak: boolean; note: boolean } | null>(null);
@@ -54,6 +57,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
   const [placing, setPlacing] = useState<{ done: number; total: number } | null>(null);
   const [replacePath, setReplacePath] = useState<string | null>(null);
+  const [replaceDoc, setReplaceDoc] = useState<{ doc: TimedDoc; words: number } | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
   const alive = useRef(true);
 
@@ -226,10 +230,15 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const editorText = editor?.getText() ?? "";
   const timedWords = project.timed?.items.filter((i) => i.k === "w").length ?? 0;
   const timedActive = tab === "timed" && !!project.timed;
+  const voiceActive = tab === "voice";
+  const takes = project.takes ?? [];
+  const takeTotal = takes.reduce((n, t) => n + t.duration, 0);
   useEffect(() => {
     const words = editorText.trim().split(/\s+/).filter(Boolean).length;
-    onCount(timedActive ? `${timedWords} kelime · zamanlı` : `${words} kelime`);
-  }, [editorText, timedWords, timedActive, onCount]);
+    onCount(
+      voiceActive ? `${takes.length} ses parçası · ${fmtDur(takeTotal)}` : timedActive ? `${timedWords} kelime · zamanlı` : `${words} kelime`,
+    );
+  }, [editorText, timedWords, timedActive, voiceActive, takes.length, takeTotal, onCount]);
   useEffect(() => () => onCount(""), [onCount]);
 
   // Proje değişince (bileşen sökülürken) bekleyen resim silmelerini uygula
@@ -320,6 +329,35 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
     void r.refine();
   };
 
+  /** Yeni zamanlı metni yerleştirir: senaryodaki resim/notlar konur, ardından AI yer bulma ve kelime kontrolü çalışır. */
+  const applyTimed = (raw: TimedDoc, words: number) => {
+    const placed = placeAtts(raw);
+    const doc = placed.doc;
+    onTimedChange(doc);
+    onTab("timed");
+    onToast([`${words} kelime zamanlandı`, placed.summary].filter(Boolean).join(" · "));
+    // Önce resim yerleri (kısa), sonra kelime kontrolü; aynı modele art arda gider.
+    void placed.refine().finally(() => alive.current && runCheck(doc));
+  };
+
+  /** Ses kayıtlarından gelen zamanlı metin: mevcut zamanlı metin varsa onay istenir. */
+  const voiceToTimed = (doc: TimedDoc, words: number) => {
+    if (project.timed?.items.some((i) => i.k === "w")) setReplaceDoc({ doc, words });
+    else applyTimed(doc, words);
+  };
+
+  /** Ses kayıtlarının metnini senaryonun sonuna paragraflar halinde ekler. */
+  const insertParagraphs = (paras: string[]) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const end = ed.state.doc.content.size;
+    const nodes = paras.map((t) => ({ type: "paragraph", content: [{ type: "text", text: t }] }));
+    ed.chain().insertContentAt(end, nodes).run();
+    onTab("write");
+    setTimeout(() => ed.commands.focus("end"), 0);
+    onToast(`${paras.length} paragraf senaryoya eklendi`);
+  };
+
   const transcribe = async (path: string) => {
     const name = path.split(/[\\/]/).pop() ?? "medya";
     setBusy(name);
@@ -327,13 +365,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       const r = await api.transcribeMedia(path, settings.sttLanguage);
       if (!alive.current) return;
       if (!r.words.length) throw new Error("Konuşma bulunamadı");
-      const placed = placeAtts(buildTimed(r.words, name, r.language || "?"));
-      const doc = placed.doc;
-      onTimedChange(doc);
-      onTab("timed");
-      onToast([`${r.words.length} kelime zamanlandı`, placed.summary].filter(Boolean).join(" · "));
-      // Önce resim yerleri (kısa), sonra kelime kontrolü; aynı modele art arda gider.
-      void placed.refine().finally(() => alive.current && runCheck(doc));
+      applyTimed(buildTimed(r.words, name, r.language || "?"), r.words.length);
     } catch (e) {
       if (alive.current) onToast(`Ses çevrilemedi: ${e}`, "error");
     } finally {
@@ -361,23 +393,32 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
 
   if (!editor) return null;
   const timedTab = tab === "timed" && !!project.timed;
+  const voiceTab = tab === "voice";
+  const writeTab = !timedTab && !voiceTab;
   const clampX = (x: number) => Math.min(Math.max(x, 24), window.innerWidth - 24);
 
   return (
     <div className="pane right-pane">
       <div className="pane-head">
-        {project.timed ? (
-          <div className="rtabs" role="tablist">
-            <button role="tab" aria-selected={!timedTab} className={"rtab" + (!timedTab ? " on" : "")} onClick={() => onTab("write")}>
-              Senaryo
-            </button>
+        <div className="rtabs" role="tablist">
+          <button role="tab" aria-selected={writeTab} className={"rtab" + (writeTab ? " on" : "")} onClick={() => onTab("write")}>
+            Senaryo
+          </button>
+          <button
+            role="tab"
+            aria-selected={voiceTab}
+            className={"rtab" + (voiceTab ? " on" : "")}
+            onClick={() => onTab("voice")}
+            title="Senaryoyu kendi sesinle parça parça kaydet (Ctrl+Shift+M)"
+          >
+            Ses kayıtları{takes.length ? <span className="rtab-count">{takes.length}</span> : null}
+          </button>
+          {project.timed && (
             <button role="tab" aria-selected={timedTab} className={"rtab" + (timedTab ? " on" : "")} onClick={() => onTab("timed")} title="Kelime kelime zamanlı, otomatik çevrilmiş metin">
               Zamanlı metin
             </button>
-          </div>
-        ) : (
-          <span className="pane-title">Senaryo</span>
-        )}
+          )}
+        </div>
         <span className="spacer" />
         {timedTab && editorAtts.current && (
           <button
@@ -399,15 +440,15 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
             ✦ AI kontrol
           </button>
         )}
-        <button
+        {!voiceTab && <button
           className="btn small media-add"
           onClick={addMedia}
           disabled={!!busy}
           title="Bilgisayardan ses veya video seç; kelime kelime zamanlı metne çevrilsin"
         >
           ＋ Ses / video
-        </button>
-        <CopyButton onCopy={onCopy} timed={timedTab} />
+        </button>}
+        {!voiceTab && <CopyButton onCopy={onCopy} timed={timedTab} />}
       </div>
       {busy && (
         <div className="banner busy">
@@ -426,7 +467,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       )}
       <div
         className="editor-scroll"
-        style={{ display: timedTab ? "none" : undefined }}
+        style={{ display: writeTab ? undefined : "none" }}
         onClick={(e) => e.target === e.currentTarget && editor.commands.focus("end")}
       >
         <EditorContent editor={editor} className="editor-col" />
@@ -440,6 +481,18 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
           onToast={onToast}
         />
       )}
+      <VoicePane
+        project={project}
+        visible={voiceTab}
+        settings={settings}
+        hasGroqKey={hasGroqKey}
+        onShow={() => onTab("voice")}
+        onPatchTakes={onPatchTakes}
+        onToTimed={voiceToTimed}
+        onInsertText={insertParagraphs}
+        onOpenSettings={onOpenSettings}
+        onToast={onToast}
+      />
       {pick && (
         <div className="pick-bar" style={{ left: clampX(pick.x), top: pick.y - 8 }} onMouseDown={(e) => e.preventDefault()}>
           {pick.speak && (
@@ -466,6 +519,20 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
           meta={project.imageMeta[openPath] ?? { name: openPath.split(/[\\/]/).pop() ?? "resim", note: "" }}
           onNote={(note) => onMeta(openPath, { ...(project.imageMeta[openPath] ?? { name: openPath.split(/[\\/]/).pop() ?? "resim" }), note })}
           onClose={() => setOpenPath(null)}
+        />
+      )}
+      {replaceDoc && (
+        <ConfirmDialog
+          title="Zamanlı metin değişecek"
+          message="Bu projedeki mevcut zamanlı metin, buradaki elle eklenen notlar ve resimler kaldırılacak; yerine ses kayıtlarından oluşan zamanlı metin gelecek. Devam edilsin mi?"
+          confirmLabel="Ses kayıtlarıyla değiştir"
+          danger
+          onConfirm={() => {
+            const d = replaceDoc;
+            setReplaceDoc(null);
+            applyTimed(d.doc, d.words);
+          }}
+          onCancel={() => setReplaceDoc(null)}
         />
       )}
       {replacePath && (

@@ -3,7 +3,7 @@ mod http;
 mod store;
 mod ytdlp;
 
-use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos};
+use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos, voice};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +33,11 @@ pub fn run() {
                         let _ = external::open_external(url.to_string());
                     }
                     tauri::webview::NewWindowResponse::Deny
+                })
+                // Senaryo ses kayıtları için mikrofon izni (yalnızca kendi arayüzümüz istiyor).
+                .on_permission_request(|_, kind| match kind {
+                    tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Allow,
+                    _ => tauri::webview::PermissionResponse::Default,
                 })
                 .build()?;
             Ok(())
@@ -71,6 +76,13 @@ pub fn run() {
             transcript::video_stream_url,
             external::open_external,
             export::save_text_file,
+            voice::save_voice_take,
+            voice::read_voice_take,
+            voice::delete_voice_take,
+            voice::prune_voice_takes,
+            voice::transcribe_voice_take,
+            voice::export_voice_takes,
+            voice::save_binary_file,
         ])
         .run(tauri::generate_context!())
         .expect("uygulama başlatılamadı");

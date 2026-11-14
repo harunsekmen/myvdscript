@@ -22,7 +22,7 @@ import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, i
 import { activeSource, patchSource, removeSource, sourceLabel, subtitleLang } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
 import { disfluentWords } from "./lib/disfluency";
-import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc } from "./lib/types";
+import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc, VoiceTake } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
 import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
 
@@ -317,6 +317,10 @@ export default function App() {
     (fn: (d: TimedDoc) => TimedDoc) => mutate((p) => (p.timed ? { ...p, timed: fn(p.timed) } : p)),
     [mutate],
   );
+  const patchTakes = useCallback(
+    (fn: (t: VoiceTake[]) => VoiceTake[]) => mutate((p) => ({ ...p, takes: fn(p.takes ?? []) })),
+    [mutate],
+  );
   const onMeta = useCallback(
     (path: string, meta: ImageMeta | null) =>
       mutate((p) => {
@@ -426,6 +430,7 @@ export default function App() {
               onDoc={onDoc}
               onTimed={onTimed}
               onPatchTimed={patchTimed}
+              onPatchTakes={patchTakes}
               onMeta={onMeta}
               onToast={toast}
               registerGetDoc={registerGetDoc}

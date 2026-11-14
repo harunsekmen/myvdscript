@@ -96,6 +96,29 @@ export interface Source {
   chaptersTr?: { src: string[]; tr: string[] };
 }
 
+/** Ses kaydının kelimesi: zamanlar kaydın başına göre (sn). */
+export interface VoiceWord {
+  w: string;
+  s: number;
+  e: number;
+}
+
+/**
+ * Senaryo için alınan tek ses kaydı parçası. Dosya proje klasöründe `voice/<file>` olarak durur.
+ * Sıra listedeki sıradır; tümü oynatılırken/birleştirilirken aralarına ayardaki kadar boşluk konur.
+ */
+export interface VoiceTake {
+  id: string;
+  file: string;
+  duration: number; // sn
+  createdAt: number;
+  label?: string; // kullanıcının verdiği ad
+  /** Kaydın ilgili olduğu soldaki kaynak bölüm (kayıt başlarken seçili/görünen bölüm). */
+  link?: { sourceId: string; segmentId: string; title: string };
+  /** Groq Whisper ile çıkarılan metin (yeniden kayıtta silinir). */
+  stt?: { lang: string; text: string; words: VoiceWord[] } | null;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -106,6 +129,8 @@ export interface Project {
   activeSourceId: string;
   editorDoc: any | null; // TipTap JSON
   timed?: TimedDoc | null;
+  /** Senaryonun parça parça ses kayıtları. */
+  takes?: VoiceTake[];
   imageMeta: Record<string, ImageMeta>;
   /** Ana aşama (Settings.stages içindeki kimlik). */
   stage?: string;
@@ -203,4 +228,17 @@ export interface Settings {
   autoStage: boolean;
   statsSource: StatsSource;
   homeSort: HomeSort;
+  /** Ses kaydı: mikrofon (boş = sistem varsayılanı) ve tarayıcı ses işleme seçenekleri. */
+  voiceDeviceId: string;
+  voiceNoiseSuppression: boolean;
+  voiceEchoCancel: boolean;
+  voiceAutoGain: boolean;
+  /** Kayıtların yazıya çevrilme dili; boşsa genel konuşma dili (sttLanguage) kullanılır. */
+  voiceLanguage: string;
+  /** Kayıt bitince Groq ile otomatik yazıya çevir. */
+  voiceAutoTranscribe: boolean;
+  /** Tümü oynatılırken / tek dosyada birleştirilirken parçalar arasındaki sessizlik (ms). */
+  voiceGapMs: number;
+  /** Kayıt başlamadan önce geri sayım (sn, 0 = yok). */
+  voiceCountdown: number;
 }

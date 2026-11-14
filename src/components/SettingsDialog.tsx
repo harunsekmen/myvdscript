@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
+import { levelMeter, listMics, openMic } from "../lib/voiceAudio";
 import { FONT_OPTIONS, fontCss } from "../lib/fonts";
 import { DEFAULT_SETTINGS, DEFAULT_STAGES } from "../lib/settingsDefaults";
 import type { Settings, StageDef, StatsSource } from "../lib/types";
@@ -18,13 +19,14 @@ interface Props {
   onClose: () => void;
 }
 
-type Section = "ai" | "speech" | "home" | "prompts" | "look";
+type Section = "ai" | "speech" | "voice" | "home" | "prompts" | "look";
 type Msg = { text: string; err?: boolean } | null;
 
 // ---- İkonlar (tek renk, çizgi) ----
 const PATHS: Record<string, string> = {
   ai: "M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z",
   speech: "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
+  voice: "M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0",
   home: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10",
   prompts: "M4 5h16M4 10h10M4 15h16M4 20h7",
   look: "M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4",
@@ -47,6 +49,7 @@ function Ico({ n, size = 16 }: { n: keyof typeof PATHS; size?: number }) {
 const SECTIONS: { id: Section; label: string; hint: string; keywords: string }[] = [
   { id: "ai", label: "Yapay zekâ", hint: "Bağlantı ve modeller", keywords: "api adres anahtar key model sıcaklık temperature parça chunk openai openrouter deepseek ollama sağlayıcı bağlantı" },
   { id: "speech", label: "Ses ve YouTube", hint: "Groq Whisper, çerezler", keywords: "groq whisper ses konuşma dil stt youtube çerez cookie firefox 429" },
+  { id: "voice", label: "Ses kaydı", hint: "Mikrofon, dil, parçalar", keywords: "ses kayıt mikrofon kayıt parça dil gürültü yankı kazanç geri sayım boşluk seslendirme voice" },
   { id: "home", label: "Ana sayfa", hint: "Aşamalar, video verisi", keywords: "ana sayfa aşama kontrol listesi izlenme yt-dlp youtube api anahtar pano kart otomatik" },
   { id: "prompts", label: "İstemler", hint: "AI talimatları", keywords: "istem prompt talimat sistem açıklama insight" },
   { id: "look", label: "Görünüm", hint: "Yazı tipi ve düzen", keywords: "yazı tipi font boyut satır aralığı genişlik oran renk segment görünüm" },
@@ -150,6 +153,113 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Whisper'ın sık kullanılan dilleri (ISO-639-1). */
+const VOICE_LANGS: { v: string; label: string }[] = [
+  { v: "", label: "Genel konuşma diliyle aynı" },
+  { v: "tr", label: "Türkçe" },
+  { v: "en", label: "İngilizce" },
+  { v: "de", label: "Almanca" },
+  { v: "fr", label: "Fransızca" },
+  { v: "es", label: "İspanyolca" },
+  { v: "it", label: "İtalyanca" },
+  { v: "ru", label: "Rusça" },
+  { v: "ar", label: "Arapça" },
+  { v: "az", label: "Azerbaycan Türkçesi" },
+  { v: "nl", label: "Felemenkçe" },
+  { v: "pt", label: "Portekizce" },
+  { v: "ja", label: "Japonca" },
+];
+
+/** Mikrofon seçimi + canlı seviye testi. Cihaz adları ilk izinden sonra görünür. */
+function MicPicker({ s, onChange }: { s: Settings; onChange: (patch: Partial<Settings>) => void }) {
+  const [mics, setMics] = useState<{ id: string; label: string }[]>([]);
+  const [testing, setTesting] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [err, setErr] = useState("");
+  const stop = useRef<(() => void) | null>(null);
+
+  const refresh = () => listMics().then(setMics).catch(() => {});
+  useEffect(() => {
+    void refresh();
+    navigator.mediaDevices?.addEventListener?.("devicechange", refresh);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", refresh);
+      stop.current?.();
+    };
+  }, []);
+
+  const test = async () => {
+    if (testing) {
+      stop.current?.();
+      return;
+    }
+    setErr("");
+    try {
+      const stream = await openMic({
+        deviceId: s.voiceDeviceId,
+        noiseSuppression: s.voiceNoiseSuppression,
+        echoCancellation: s.voiceEchoCancel,
+        autoGainControl: s.voiceAutoGain,
+      });
+      void refresh();
+      const m = levelMeter(stream);
+      let raf = 0;
+      const loop = () => {
+        setLevel(m.level());
+        raf = requestAnimationFrame(loop);
+      };
+      loop();
+      setTesting(true);
+      stop.current = () => {
+        cancelAnimationFrame(raf);
+        m.close();
+        stream.getTracks().forEach((t) => t.stop());
+        stop.current = null;
+        setTesting(false);
+        setLevel(0);
+      };
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const db = level > 0 ? 20 * Math.log10(level) : -60;
+  const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+  const known = !s.voiceDeviceId || mics.some((m) => m.id === s.voiceDeviceId);
+  return (
+    <div className="mic-picker">
+      <div className="mic-row">
+        <select
+          className="input"
+          value={s.voiceDeviceId}
+          onChange={(e) => {
+            stop.current?.();
+            onChange({ voiceDeviceId: e.target.value });
+          }}
+        >
+          <option value="">Sistem varsayılanı</option>
+          {!known && <option value={s.voiceDeviceId}>Seçili mikrofon (takılı değil)</option>}
+          {mics.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <button className={"btn" + (testing ? " primary" : "")} onClick={test}>
+          {testing ? "Testi durdur" : "Mikrofonu test et"}
+        </button>
+      </div>
+      {testing && (
+        <div className={"vr-meter" + (level > 0.97 ? " clip" : "")}>
+          <div style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {testing && <span className="s-status ok">Konuşun: çubuk yeşilde ve sarıda gezinmeli; kırmızıya vuruyorsa mikrofon kazancını düşürün.</span>}
+      {err && <span className="s-status err">{err}</span>}
     </div>
   );
 }
@@ -402,6 +512,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
   const navState: Record<Section, "ok" | "warn" | null> = {
     ai: aiReady ? "ok" : "warn",
     speech: hasGroqKey ? "ok" : null,
+    voice: null,
     home: s.statsSource === "api" && !hasYoutubeKey ? "warn" : null,
     prompts: s.systemPrompt !== DEFAULT_SETTINGS.systemPrompt || s.insightPrompt !== DEFAULT_SETTINGS.insightPrompt ? "warn" : null,
     look: null,
@@ -409,6 +520,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
   const navTitle: Record<Section, string> = {
     ai: aiReady ? "Hazır" : !hasKey ? "API anahtarı girilmedi" : "Model seçilmedi",
     speech: hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
+    voice: "",
     home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
     prompts: navState.prompts ? "Özelleştirilmiş istem var" : "",
     look: "",
@@ -493,6 +605,62 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
               onChange={(v) => onChange({ cookiesBrowser: v === "firefox" ? "firefox" : "" })}
             />
           </Row>
+        </Card>
+      </>
+    ),
+    voice: (
+      <>
+        <Card title="Mikrofon" hint="Senaryo sekmesinin yanındaki 'Ses kayıtları' bölümünde parça parça kayıt alınır.">
+          <Row label="Kayıt cihazı" desc="Cihaz adları ilk mikrofon izninden sonra listelenir." wide>
+            <MicPicker s={s} onChange={onChange} />
+          </Row>
+          <Row label="Gürültü bastırma" desc="Fan, klima gibi sabit arka plan seslerini azaltır. Sessiz bir odada kapatmak daha doğal ses verir.">
+            <Segmented value={s.voiceNoiseSuppression ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ voiceNoiseSuppression: v === "on" })} />
+          </Row>
+          <Row label="Yankı engelleme" desc="Hoparlörden gelen sesi kayıttan çıkarır; kulaklıkla kayıtta gerekmez.">
+            <Segmented value={s.voiceEchoCancel ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ voiceEchoCancel: v === "on" })} />
+          </Row>
+          <Row label="Otomatik kazanç" desc="Ses seviyesini kendiliğinden ayarlar; seslendirmede dalgalanmaya yol açabilir.">
+            <Segmented value={s.voiceAutoGain ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ voiceAutoGain: v === "on" })} />
+          </Row>
+        </Card>
+        <Card title="Kayıt">
+          <Row label="Geri sayım" desc="Kayda başlamadan önce nefes alacak kadar süre.">
+            <Segmented
+              value={String(s.voiceCountdown) as "0" | "1" | "3"}
+              options={[
+                { v: "0", label: "Yok" },
+                { v: "1", label: "1 sn" },
+                { v: "3", label: "3 sn" },
+              ]}
+              onChange={(v) => onChange({ voiceCountdown: Number(v) })}
+            />
+          </Row>
+          {range("voiceGapMs", "Parçalar arası boşluk", 0, 2000, 50, (v) => `${(v / 1000).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} sn`, "Tümü art arda çalınırken, tek dosyada birleştirilirken ve zamanlı metne aktarılırken parçaların arasına konan sessizlik.")}
+        </Card>
+        <Card title="Yazıya çevirme" hint="Groq Whisper kullanılır (anahtar 'Ses ve YouTube' bölümünde).">
+          <Row label="Kayıt dili" desc="Konuştuğunuz dil. Doğru dil seçmek tanımayı belirgin biçimde iyileştirir.">
+            <select className="input s-narrow" value={VOICE_LANGS.some((l) => l.v === s.voiceLanguage) ? s.voiceLanguage : "__custom"} onChange={(e) => e.target.value !== "__custom" && onChange({ voiceLanguage: e.target.value })}>
+              {VOICE_LANGS.map((l) => (
+                <option key={l.v} value={l.v}>
+                  {l.label}
+                </option>
+              ))}
+              {!VOICE_LANGS.some((l) => l.v === s.voiceLanguage) && <option value="__custom">{s.voiceLanguage}</option>}
+            </select>
+          </Row>
+          <Row label="Kayıttan sonra otomatik çevir" desc="Her parça kaydedilir kaydedilmez arka planda yazıya çevrilir.">
+            <Segmented value={s.voiceAutoTranscribe ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ voiceAutoTranscribe: v === "on" })} />
+          </Row>
+        </Card>
+        <Card title="Kısayollar">
+          <div className="s-keys">
+            <span><kbd>Ctrl+Shift+M</kbd> her yerden kayıt başlat / bitir</span>
+            <span><kbd>R</kbd> yeni parça (Ses kayıtları sekmesinde)</span>
+            <span><kbd>Enter</kbd> kaydı bitir · <kbd>Esc</kbd> iptal edip yeniden kaydet</span>
+            <span><kbd>Boşluk</kbd> kayıtta duraklat, değilse tümünü çal</span>
+            <span><kbd>↑</kbd> <kbd>↓</kbd> parça seç · <kbd>Enter</kbd> seçiliyi çal · <kbd>F2</kbd> adlandır · <kbd>Del</kbd> sil</span>
+          </div>
         </Card>
       </>
     ),

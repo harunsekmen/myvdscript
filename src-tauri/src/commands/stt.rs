@@ -56,7 +56,7 @@ async fn to_mp3(src: &Path) -> Result<std::path::PathBuf, String> {
 }
 
 /// ffmpeg: önce exe'nin yanındaki ffmpeg.exe, yoksa PATH.
-fn ffmpeg_path() -> std::path::PathBuf {
+pub fn ffmpeg_path() -> std::path::PathBuf {
     let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     if let Some(local) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(exe))) {
         if local.is_file() {
@@ -105,6 +105,11 @@ pub async fn transcribe_media(path: String, language: String) -> Result<Value, S
         return Err("Ses dosyası çok büyük (Groq sınırı 25 MB; yaklaşık 70 dakikadan uzun kayıtları bölün)".into());
     }
 
+    groq_transcribe(&key, bytes, name, mime, &language).await
+}
+
+/// Ses baytlarını Groq Whisper'a gönderir ve kelime zamanlı sonucu sadeleştirir.
+pub async fn groq_transcribe(key: &str, bytes: Vec<u8>, name: String, mime: &str, language: &str) -> Result<Value, String> {
     let part = multipart::Part::bytes(bytes)
         .file_name(name)
         .mime_str(mime)
