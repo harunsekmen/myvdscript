@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CheckItem, Project, ProjectMeta, Settings, VideoStat } from "./types";
+import type { CheckItem, Project, ProjectMeta, Settings, SttEngine, VideoStat } from "./types";
 
 export interface Transcript {
   lang: string;
@@ -25,6 +25,21 @@ export interface MediaWord {
   word: string;
   start: number;
   end: number;
+}
+
+export interface WhisperStatus {
+  engine: boolean;
+  models: { id: string; size: number }[];
+  downloading: string | null;
+  dir: string;
+}
+
+export interface WhisperProgress {
+  item: string; // "engine" ya da model adı
+  received: number;
+  total: number;
+  done: boolean;
+  error: string | null;
 }
 
 export interface MediaTranscript {
@@ -61,8 +76,15 @@ export const api = {
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   hasGroqKey: () => invoke<boolean>("has_groq_key"),
   setGroqKey: (key: string) => invoke<void>("set_groq_key", { key }),
-  transcribeMedia: (path: string, language: string) =>
-    invoke<MediaTranscript>("transcribe_media", { path, language }),
+  transcribeMedia: (path: string, language: string, engine: SttEngine, model: string) =>
+    invoke<MediaTranscript>("transcribe_media", { path, language, engine, model }),
+  /** Birleşik 16 kHz WAV'ı yazıya çevirir (ham gövde). */
+  transcribeAudio: (wav: Uint8Array, o: { language: string; engine: SttEngine; model: string }) =>
+    invoke<MediaTranscript>("transcribe_audio", wav, { headers: { "x-language": o.language, "x-engine": o.engine, "x-model": o.model } }),
+  whisperStatus: () => invoke<WhisperStatus>("whisper_status"),
+  whisperDownload: (model: string) => invoke<void>("whisper_download", { model }),
+  whisperCancelDownload: () => invoke<void>("whisper_cancel_download"),
+  whisperDeleteModel: (model: string) => invoke<void>("whisper_delete_model", { model }),
   listSubtitles: (url: string) => invoke<SubtitleList>("list_subtitles", { url }),
   fetchDefaultTranscript: (url: string) => invoke<Transcript>("fetch_default_transcript", { url }),
   fetchTranscript: (url: string, lang: string, auto: boolean) =>
@@ -84,8 +106,6 @@ export const api = {
   readVoiceTake: (projectId: string, file: string) => invoke<ArrayBuffer>("read_voice_take", { projectId, file }),
   deleteVoiceTake: (projectId: string, file: string) => invoke<void>("delete_voice_take", { projectId, file }),
   pruneVoiceTakes: (projectId: string, keep: string[]) => invoke<number>("prune_voice_takes", { projectId, keep }),
-  transcribeVoiceTake: (projectId: string, file: string, language: string) =>
-    invoke<MediaTranscript>("transcribe_voice_take", { projectId, file, language }),
   exportVoiceTakes: (projectId: string, files: string[], gapMs: number, outPath: string) =>
     invoke<void>("export_voice_takes", { projectId, files, gapMs, outPath }),
   saveBinaryFile: (path: string, bytes: Uint8Array) =>
@@ -171,4 +191,14 @@ export function onYtdlpStatus(cb: (msg: string) => void) {
 /** Bir video istatistiği güncellendiğinde (arka planda tek tek) çağrılır. */
 export function onVideoStat(cb: (s: VideoStat) => void) {
   return listen<VideoStat>("video-stat", (e) => cb(e.payload));
+}
+
+/** Yerel Whisper indirme ilerlemesi. */
+export function onWhisperDownload(cb: (p: WhisperProgress) => void) {
+  return listen<WhisperProgress>("whisper-download", (e) => cb(e.payload));
+}
+
+/** Yerel Whisper çeviri ilerlemesi (yüzde). */
+export function onSttProgress(cb: (percent: number) => void) {
+  return listen<number>("stt-progress", (e) => cb(e.payload));
 }

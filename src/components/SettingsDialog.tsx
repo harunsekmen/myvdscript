@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api } from "../lib/api";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { api, onWhisperDownload, type WhisperProgress } from "../lib/api";
+import { modelInstalled, refreshWhisper, subscribeWhisper, whisperStatus, WHISPER_MODELS } from "../lib/stt";
 import { levelMeter, listMics, openMic } from "../lib/voiceAudio";
 import { FONT_OPTIONS, fontCss } from "../lib/fonts";
 import { DEFAULT_SETTINGS, DEFAULT_STAGES, DEFAULT_VOICE_KEYS, voiceKeys } from "../lib/settingsDefaults";
 import { comboFromEvent, prettyCombo } from "../lib/keys";
-import type { Settings, StageDef, StatsSource, VoiceKeyAction } from "../lib/types";
+import type { Settings, StageDef, StatsSource, SttEngine, VoiceKeyAction } from "../lib/types";
 
 interface Props {
   settings: Settings;
@@ -49,7 +50,7 @@ function Ico({ n, size = 16 }: { n: keyof typeof PATHS; size?: number }) {
 
 const SECTIONS: { id: Section; label: string; hint: string; keywords: string }[] = [
   { id: "ai", label: "Yapay zekâ", hint: "Bağlantı ve modeller", keywords: "api adres anahtar key model sıcaklık temperature parça chunk openai openrouter deepseek ollama sağlayıcı bağlantı" },
-  { id: "speech", label: "Ses ve YouTube", hint: "Groq Whisper, çerezler", keywords: "groq whisper ses konuşma dil stt youtube çerez cookie firefox 429" },
+  { id: "speech", label: "Ses ve YouTube", hint: "Whisper (Groq / yerel), çerezler", keywords: "groq whisper yerel local model indir ses konuşma dil stt youtube çerez cookie firefox 429" },
   { id: "voice", label: "Ses kaydı", hint: "Mikrofon, dil, parçalar", keywords: "ses kayıt mikrofon kayıt parça dil gürültü yankı kazanç geri sayım boşluk seslendirme voice" },
   { id: "home", label: "Ana sayfa", hint: "Aşamalar, video verisi", keywords: "ana sayfa aşama kontrol listesi izlenme yt-dlp youtube api anahtar pano kart otomatik" },
   { id: "prompts", label: "İstemler", hint: "AI talimatları", keywords: "istem prompt talimat sistem açıklama insight" },
@@ -155,6 +156,108 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
         </button>
       ))}
     </div>
+  );
+}
+
+const fmtMB = (b: number) => (b >= 1e9 ? `${(b / 1e9).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} GB` : `${Math.round(b / 1e6)} MB`);
+
+/** Yerel Whisper: motor + model indirme, seçme ve silme. */
+function LocalWhisper({ s, onChange }: { s: Settings; onChange: (patch: Partial<Settings>) => void }) {
+  const st = useSyncExternalStore(subscribeWhisper, whisperStatus);
+  const [prog, setProg] = useState<WhisperProgress | null>(null);
+  const [msg, setMsg] = useState<Msg>(null);
+  const [active, setActive] = useState<string | null>(null);
+
+  useEffect(() => {
+    void refreshWhisper();
+    const un = onWhisperDownload((p) => setProg(p.done ? null : p));
+    return () => void un.then((f) => f());
+  }, []);
+
+  // Pencere kapatılıp açılırsa süren indirme arka uçtan öğrenilir.
+  const downloading = active ?? st?.downloading ?? null;
+  const download = async (id: string) => {
+    setMsg(null);
+    setActive(id);
+    try {
+      await api.whisperDownload(id);
+      const now = await refreshWhisper();
+      if (!now?.models.some((m) => m.id === s.whisperModel)) onChange({ whisperModel: id });
+      setMsg({ text: "Model indirildi ve kullanıma hazır" });
+    } catch (e) {
+      const t = String(e);
+      if (!t.includes("iptal")) setMsg({ text: t, err: true });
+      void refreshWhisper();
+    } finally {
+      setActive(null);
+      setProg(null);
+    }
+  };
+  const remove = async (id: string) => {
+    try {
+      await api.whisperDeleteModel(id);
+      await refreshWhisper();
+    } catch (e) {
+      setMsg({ text: String(e), err: true });
+    }
+  };
+
+  const pct = prog && prog.total > 0 ? Math.min(100, (prog.received / prog.total) * 100) : null;
+  const sizeOf = (id: string) => st?.models.find((m) => m.id === id)?.size ?? 0;
+  const ready = modelInstalled(s.whisperModel);
+
+  return (
+    <Card
+      title="Yerel Whisper"
+      hint="whisper.cpp bu bilgisayarda çalışır: internet ve anahtar gerekmez, istek sınırı yoktur. Hız işlemciye bağlıdır; ilk indirmede motor (~8 MB) da kurulur."
+    >
+      <Row
+        label="Model"
+        desc={ready ? "Seçili model hazır. Başka bir model indirip seçebilirsiniz." : "Kullanmak için bir model indirin; Türkçe için en üstteki önerilen modelle başlayın."}
+        aside={ready ? <span className="s-pill ok">hazır</span> : <span className="s-pill warn">model yok</span>}
+        wide
+      >
+        <div className="wm-list">
+          {WHISPER_MODELS.map((m) => {
+            const have = modelInstalled(m.id);
+            const sel = s.whisperModel === m.id && have;
+            const busy = downloading === m.id;
+            return (
+              <div key={m.id} className={"wm-row" + (sel ? " sel" : "")}>
+                <button className="wm-pick" disabled={!have} onClick={() => onChange({ whisperModel: m.id })} title={have ? "Bu modeli kullan" : "Önce indirin"}>
+                  <span className={"wm-radio" + (sel ? " on" : "")} />
+                  <span className="wm-text">
+                    <span className="wm-name">{m.label}</span>
+                    <span className="wm-note">{m.note}</span>
+                  </span>
+                </button>
+                <span className="wm-size muted tnum">{have ? fmtMB(sizeOf(m.id)) : m.size}</span>
+                {busy ? (
+                  <div className="wm-prog">
+                    <div className="wm-bar">
+                      <div style={{ width: `${pct ?? 0}%` }} />
+                    </div>
+                    <span className="muted tnum wm-pct">{prog?.item === "engine" ? "Motor…" : pct != null ? `%${Math.floor(pct)}` : "…"}</span>
+                    <button className="btn small ghost" onClick={() => void api.whisperCancelDownload()}>
+                      İptal
+                    </button>
+                  </div>
+                ) : have ? (
+                  <button className="btn small ghost danger" onClick={() => void remove(m.id)} disabled={!!downloading}>
+                    Sil
+                  </button>
+                ) : (
+                  <button className="btn small" onClick={() => void download(m.id)} disabled={!!downloading}>
+                    İndir
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <Status msg={msg} />
+      </Row>
+    </Card>
   );
 }
 
@@ -570,9 +673,11 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
   };
 
   const aiReady = hasKey && !!s.model;
+  const whisper = useSyncExternalStore(subscribeWhisper, whisperStatus);
+  const speechReady = s.sttEngine === "local" ? !!whisper && modelInstalled(s.whisperModel) : hasGroqKey;
   const navState: Record<Section, "ok" | "warn" | null> = {
     ai: aiReady ? "ok" : "warn",
-    speech: hasGroqKey ? "ok" : null,
+    speech: speechReady ? "ok" : s.sttEngine === "local" ? "warn" : null,
     voice: null,
     home: s.statsSource === "api" && !hasYoutubeKey ? "warn" : null,
     prompts: s.systemPrompt !== DEFAULT_SETTINGS.systemPrompt || s.insightPrompt !== DEFAULT_SETTINGS.insightPrompt ? "warn" : null,
@@ -580,7 +685,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
   };
   const navTitle: Record<Section, string> = {
     ai: aiReady ? "Hazır" : !hasKey ? "API anahtarı girilmedi" : "Model seçilmedi",
-    speech: hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
+    speech: s.sttEngine === "local" ? (speechReady ? "Yerel Whisper hazır" : "Yerel model indirilmedi") : hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
     voice: "",
     home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
     prompts: navState.prompts ? "Özelleştirilmiş istem var" : "",
@@ -646,14 +751,27 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     ),
     speech: (
       <>
-        <Card title="Groq Whisper" hint="Ses ve video dosyalarını kelime kelime zamanlı metne çevirir.">
+        <Card title="Ses → yazı" hint="Ses kayıtları ve eklenen ses/video dosyaları seçilen motorla kelime kelime zamanlı metne çevrilir.">
+          <Row label="Motor" desc="Groq: hızlı ve bulutta; ücretsiz anahtar ve internet gerekir, dakikalık istek sınırı vardır. Yerel: bu bilgisayarda, internetsiz ve sınırsız.">
+            <Segmented<SttEngine>
+              value={s.sttEngine}
+              options={[
+                { v: "groq", label: "Groq" },
+                { v: "local", label: "Yerel Whisper" },
+              ]}
+              onChange={(v) => onChange({ sttEngine: v })}
+            />
+          </Row>
+          <Row label="Konuşma dili" desc="Boş bırakılırsa otomatik algılanır (ör. tr, en).">
+            <input className="input s-narrow" spellCheck={false} value={s.sttLanguage} onChange={(e) => onChange({ sttLanguage: e.target.value.trim() })} placeholder="otomatik" />
+          </Row>
+        </Card>
+        {s.sttEngine === "local" && <LocalWhisper s={s} onChange={onChange} />}
+        <Card title="Groq Whisper" hint={s.sttEngine === "groq" ? "Şu an kullanılan motor." : "Groq'a geri dönmek isterseniz anahtar burada saklanır."}>
           <Row label="Groq API anahtarı" aside={hasGroqKey && <span className="s-pill ok">kayıtlı</span>} desc="console.groq.com üzerinden ücretsiz alınabilir." wide>
             <KeyInput saved={hasGroqKey} placeholder="gsk_…" onSave={saveGroqKey} />
           </Row>
           <Status msg={groqMsg} />
-          <Row label="Konuşma dili" desc="Boş bırakılırsa otomatik algılanır.">
-            <input className="input s-narrow" spellCheck={false} value={s.sttLanguage} onChange={(e) => onChange({ sttLanguage: e.target.value.trim() })} placeholder="otomatik" />
-          </Row>
         </Card>
         <Card title="YouTube" hint="YouTube 'istek sınırı' (HTTP 429) hatası verirse, giriş yaptığınız tarayıcının çerezleri kullanılabilir. Tarayıcıyı kapatmanız gerekmez.">
           <Row label="Çerez kaynağı" desc="Firefox'ta YouTube'a giriş yapmış olmanız gerekir.">
@@ -699,7 +817,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
           </Row>
           {range("voiceGapMs", "Parçalar arası boşluk", 0, 2000, 50, (v) => `${(v / 1000).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} sn`, "Tümü art arda çalınırken, tek dosyada birleştirilirken ve zamanlı metne aktarılırken parçaların arasına konan sessizlik.")}
         </Card>
-        <Card title="Yazıya çevirme" hint="Groq Whisper kullanılır (anahtar 'Ses ve YouTube' bölümünde).">
+        <Card title="Yazıya çevirme" hint={(s.sttEngine === "local" ? "Yerel Whisper" : "Groq Whisper") + " kullanılır (motor 'Ses ve YouTube' bölümünden seçilir). Parçalar tek tek değil, birleştirilip toplu gönderilir."}>
           <Row label="Kayıt dili" desc="Konuştuğunuz dil. Doğru dil seçmek tanımayı belirgin biçimde iyileştirir.">
             <select className="input s-narrow" value={VOICE_LANGS.some((l) => l.v === s.voiceLanguage) ? s.voiceLanguage : "__custom"} onChange={(e) => e.target.value !== "__custom" && onChange({ voiceLanguage: e.target.value })}>
               {VOICE_LANGS.map((l) => (

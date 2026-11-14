@@ -9,3 +9,4 @@ pub mod tts;
 pub mod transcript;
 pub mod videos;
 pub mod voice;
+pub mod whisper;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimeline, encodeWav, fmtDur, locate, moveTake, takesText, takesToTimed } from "./voice";
+import { alignPunctuation, buildTimeline, encodeWav, fmtDur, locate, moveTake, packBatches, splitWords, takesText, takesToTimed } from "./voice";
 import type { VoiceTake } from "./types";
 
 const take = (id: string, duration: number, extra: Partial<VoiceTake> = {}): VoiceTake => ({ id, file: `${id}.webm`, duration, createdAt: 0, ...extra });
@@ -99,5 +99,40 @@ describe("kısayollar", () => {
     expect(matchCombo(ev("R", { shiftKey: true }), "R")).toBe(false);
     expect(matchCombo(ev("R", { shiftKey: true }), "Shift+R")).toBe(true);
     expect(prettyCombo("Ctrl+Space")).toBe("Ctrl+Boşluk");
+  });
+});
+
+describe("toplu yazıya çevirme", () => {
+  it("parçaları süre sınırına göre gruplar", () => {
+    const d = (n: number) => ({ duration: n });
+    expect(packBatches([d(4), d(4), d(4), d(20), d(1)], 10, 1).map((g) => g.map((x) => x.duration))).toEqual([[4, 4], [4], [20], [1]]);
+    expect(packBatches([], 10, 1)).toEqual([]);
+  });
+
+  it("kelimeleri orta noktalarına göre parçalara dağıtır", () => {
+    const spans = [
+      { start: 0, duration: 2 },
+      { start: 3, duration: 2 },
+    ];
+    const words = [
+      { word: " Merhaba", start: 0.1, end: 0.6 },
+      { word: "dünya.", start: 1.5, end: 2.3 }, // sessizliğin ilk yarısına taşıyor
+      { word: "Nasılsın?", start: 2.9, end: 3.6 },
+    ];
+    const [a, b] = splitWords(words, spans);
+    expect(a.map((w) => w.w)).toEqual(["Merhaba", "dünya."]);
+    expect(a[1].e).toBe(2); // parça sonuna kırpılır
+    expect(b).toEqual([{ w: "Nasılsın?", s: 0, e: expect.closeTo(0.6, 5) }]);
+  });
+
+  it("noktalamayı tam metinden alır", () => {
+    expect(alignPunctuation("Şimdi açık konuşalım. Bizler, kim?", ["Şimdi", "açık", "konuşalım", "Bizler", "kim"])).toEqual([
+      "Şimdi",
+      "açık",
+      "konuşalım.",
+      "Bizler,",
+      "kim?",
+    ]);
+    expect(alignPunctuation("tamamen başka", ["merhaba"])).toEqual(["merhaba"]);
   });
 });

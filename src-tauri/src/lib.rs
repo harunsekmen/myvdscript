@@ -3,7 +3,7 @@ mod http;
 mod store;
 mod ytdlp;
 
-use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos, voice};
+use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos, voice, whisper};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -65,6 +65,11 @@ pub fn run() {
             settings::has_groq_key,
             settings::set_groq_key,
             stt::transcribe_media,
+            stt::transcribe_audio,
+            whisper::whisper_status,
+            whisper::whisper_download,
+            whisper::whisper_cancel_download,
+            whisper::whisper_delete_model,
             transcript::list_subtitles,
             transcript::fetch_transcript,
             transcript::fetch_default_transcript,
@@ -80,7 +85,6 @@ pub fn run() {
             voice::read_voice_take,
             voice::delete_voice_take,
             voice::prune_voice_takes,
-            voice::transcribe_voice_take,
             voice::export_voice_takes,
             voice::save_binary_file,
         ])

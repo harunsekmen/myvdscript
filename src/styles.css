@@ -975,3 +975,22 @@ button.vf-title:hover { color: var(--text); }
 .mic-picker { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .mic-row { display: flex; gap: 8px; }
 .mic-row select { flex: 1; min-width: 0; }
+
+/* Yerel Whisper model listesi */
+.wm-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.wm-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid transparent; border-radius: 9px; }
+.wm-row:hover { background: #ffffff05; }
+.wm-row.sel { border-color: #3a4a80; background: #6c8cff10; }
+.wm-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; background: none; border: none; padding: 0; text-align: left; color: inherit; cursor: pointer; }
+.wm-pick:disabled { cursor: default; }
+.wm-radio { width: 14px; height: 14px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid #4a4f63; }
+.wm-pick:disabled .wm-radio { opacity: .35; }
+.wm-radio.on { border-color: var(--accent); box-shadow: inset 0 0 0 3px #1e212b; background: var(--accent); }
+.wm-text { display: flex; flex-direction: column; min-width: 0; }
+.wm-name { font-size: 12.8px; }
+.wm-note { font-size: 11.5px; color: var(--muted); }
+.wm-size { font-size: 11.5px; white-space: nowrap; }
+.wm-prog { display: flex; align-items: center; gap: 8px; }
+.wm-bar { width: 90px; height: 5px; border-radius: 3px; background: #ffffff12; overflow: hidden; }
+.wm-bar > div { height: 100%; background: var(--accent); transition: width .2s; }
+.wm-pct { font-size: 11.5px; min-width: 42px; text-align: right; }

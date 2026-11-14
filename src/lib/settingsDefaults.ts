@@ -41,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   chunkChars: 6000,
   lastProjectId: "",
   sttLanguage: "",
+  sttEngine: "groq",
+  whisperModel: "large-v3-turbo-q5_0",
   cookiesBrowser: "",
   stages: DEFAULT_STAGES,
   defaultChecklist: ["Kaynakları izle", "Taslak yaz", "Gözden geçir", "Çekim", "Thumbnail", "Yükle"],

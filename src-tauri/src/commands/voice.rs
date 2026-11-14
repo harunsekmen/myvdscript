@@ -1,8 +1,7 @@
 //! Senaryo için parça parça ses kayıtları: proje klasöründeki `voice/` altında saklanır.
 //! Ses baytları IPC'de ham gövde olarak taşınır (base64 şişmesi olmadan).
 
-use super::settings::groq_key;
-use super::stt::{ffmpeg_path, groq_transcribe};
+use super::stt::ffmpeg_path;
 use crate::store;
 use serde_json::{json, Value};
 use std::{
@@ -118,27 +117,6 @@ pub fn prune_voice_takes(project_id: String, keep: Vec<String>) -> Result<u32, S
         }
     }
     Ok(n)
-}
-
-/// Tek kaydı Groq Whisper ile kelime zamanlı metne çevirir (zamanlar kaydın başına göredir).
-#[tauri::command]
-pub async fn transcribe_voice_take(project_id: String, file: String, language: String) -> Result<Value, String> {
-    let key = groq_key().ok_or("Groq API anahtarı girilmemiş (Ayarlar'dan ekleyin)")?;
-    let p = take_path(&project_id, &file)?;
-    let bytes = tauri::async_runtime::spawn_blocking(move || fs::read(p))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("Kayıt okunamadı: {e}"))?;
-    if bytes.len() > 25 * 1024 * 1024 {
-        return Err("Kayıt çok büyük (Groq sınırı 25 MB)".into());
-    }
-    let mime = match Path::new(&file).extension().and_then(|e| e.to_str()).unwrap_or("webm") {
-        "ogg" => "audio/ogg",
-        "wav" => "audio/wav",
-        "mp4" | "m4a" => "audio/mp4",
-        _ => "audio/webm",
-    };
-    groq_transcribe(&key, bytes, file, mime, &language).await
 }
 
 /// Çıkış uzantısına göre ffmpeg kodlayıcı ayarları.

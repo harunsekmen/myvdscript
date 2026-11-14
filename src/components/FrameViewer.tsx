@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
+import { claimKeys } from "../lib/keyScope";
 
 // Akış adresleri birkaç saat geçerlidir; oturum boyunca saklanır, hata olursa yenisi alınır.
 const streamCache = new Map<string, Promise<string>>();
@@ -89,6 +90,9 @@ export function FrameViewer({ videoId, url, open, target, onClose }: Props) {
     const h = window.setTimeout(go, 250);
     return () => window.clearTimeout(h);
   }, [target, meta, open]);
+
+  // Açıkken arkadaki panellerin kısayolları (ör. ses kayıtlarının Boşluk/ok tuşları) çalışmaz.
+  useEffect(() => (open ? claimKeys(() => "exclusive") : undefined), [open]);
 
   // Pencereyi gerçekten tam ekran yap; kapanınca eski hâline dön.
   useEffect(() => {

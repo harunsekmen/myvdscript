@@ -4,8 +4,10 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { matchCombo, prettyCombo } from "../lib/keys";
 import { voiceKeys } from "../lib/settingsDefaults";
-import { VOICE_RECORD_EVENT, buildTimeline, fmtDur, groupTakes, locate, moveTake, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
-import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, VoicePlayer } from "../lib/voiceAudio";
+import { VOICE_RECORD_EVENT, alignPunctuation, buildTimeline, fmtDur, groupTakes, locate, moveTake, packBatches, splitWords, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
+import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, renderForStt, VoicePlayer } from "../lib/voiceAudio";
+import { sttMissingMessage, sttOptions } from "../lib/stt";
+import { keysClaimed } from "../lib/keyScope";
 import type { Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
 
 export type VoiceLink = NonNullable<VoiceTake["link"]>;
@@ -14,7 +16,8 @@ interface Props {
   project: Project;
   visible: boolean;
   settings: Settings;
-  hasGroqKey: boolean;
+  /** Ses → yazı motoru hazır mı (Groq anahtarı ya da yerel model). */
+  sttOk: boolean;
   onShow: () => void;
   onPatchTakes: (fn: (t: VoiceTake[]) => VoiceTake[]) => void;
   onToTimed: (doc: TimedDoc, words: number) => void;
@@ -30,6 +33,11 @@ interface RecState {
   link: VoiceLink | null;
   count?: number;
 }
+
+/** Toplu çeviride parçalar arasına konan sessizlik (sn): kelimeler parçalara karışmasın. */
+const STT_GAP = 1;
+/** Tek istekte gönderilen en uzun ses (sn); 16 kHz WAV'da ~19 MB, Groq'un 25 MB sınırının altı. */
+const STT_BATCH_SEC = 600;
 
 /** Yazıya çevrilmemiş parçanın genişliği: saniye başına piksel. */
 const PX_PER_SEC = 7;
@@ -148,7 +156,7 @@ const I = {
 
 // ---------------------------------------------------------------- Panel
 
-export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPatchTakes, onToTimed, onInsertText, onOpenSettings, onToast }: Props) {
+export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTakes, onToTimed, onInsertText, onOpenSettings, onToast }: Props) {
   const takes = useMemo(() => project.takes ?? [], [project.takes]);
   const takesRef = useRef(takes);
   takesRef.current = takes;
@@ -177,7 +185,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   const player = useRef(new VoicePlayer());
   const [, setFrame] = useState(0);
   const [stt, setStt] = useState<{ busy: Set<string>; errors: Record<string, string> }>({ busy: new Set(), errors: {} });
-  const sttChain = useRef<Promise<void>>(Promise.resolve());
+  /** Yazıya çevrilmeyi bekleyen parçalar ve onları toplu gönderen döngü. */
+  const sttQueue = useRef<string[]>([]);
+  const sttRun = useRef<Promise<void> | null>(null);
   /** Son çeviri sonuçları (dosya → metin): proje durumu henüz yeniden çizilmeden okunabilsin diye. */
   const fresh = useRef(new Map<string, NonNullable<VoiceTake["stt"]>>());
   const [undo, setUndo] = useState<{ take: VoiceTake; index: number } | null>(null);
@@ -333,47 +343,93 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   // ---------------------------------------------------------------- Yazıya çevirme
 
-  const transcribe = useCallback(
-    (ids: string[]): Promise<void> => {
-      for (const id of ids) {
-        setStt((s) => ({ busy: new Set(s.busy).add(id), errors: { ...s.errors, [id]: "" } }));
-        sttChain.current = sttChain.current.then(async () => {
-          const take = takesRef.current.find((t) => t.id === id);
-          if (!take || !alive.current) {
-            setStt((s) => ({ ...s, busy: new Set([...s.busy].filter((x) => x !== id)) }));
-            return;
+  /** Bir grup parçayı tek ses olarak gönderir, gelen kelimeleri sürelerine göre parçalara dağıtır. */
+  const runBatch = useCallback(
+    async (batch: VoiceTake[]) => {
+      const st = settingsRef.current;
+      const lang = st.voiceLanguage || st.sttLanguage;
+      const errors: Record<string, string> = {};
+      let failure = "";
+      let silent = 0;
+      try {
+        const { wav, spans } = await renderForStt(projectRef.current.id, batch.map((t) => t.file), STT_GAP);
+        const r = await api.transcribeAudio(wav, sttOptions(st, lang));
+        const fixed = alignPunctuation(r.text, r.words.map((w) => w.word.trim()));
+        const parts = splitWords(r.words.map((w, i) => ({ ...w, word: fixed[i] })), spans);
+        const results = new Map<string, NonNullable<VoiceTake["stt"]>>();
+        batch.forEach((take, i) => {
+          const words = parts[i];
+          const result = { lang: r.language || "?", text: words.map((w) => w.w).join(" "), words };
+          fresh.current.set(take.file, result);
+          results.set(take.file, result);
+          if (!words.length) {
+            errors[take.id] = "Konuşma bulunamadı";
+            silent++;
           }
-          let error = "";
-          try {
-            const lang = settingsRef.current.voiceLanguage || settingsRef.current.sttLanguage;
-            const r = await api.transcribeVoiceTake(projectRef.current.id, take.file, lang);
-            const words = r.words.map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
-            const result = { lang: r.language || "?", text: r.text.trim(), words };
-            fresh.current.set(take.file, result);
-            onPatchTakes((ts) => ts.map((t) => (t.id === id && t.file === take.file ? { ...t, stt: result } : t)));
-            if (!words.length) error = "Konuşma bulunamadı";
-          } catch (e) {
-            error = String(e);
-          }
-          if (!alive.current) return;
-          setStt((s) => ({ busy: new Set([...s.busy].filter((x) => x !== id)), errors: { ...s.errors, [id]: error } }));
-          if (error) onToast(`Yazıya çevrilemedi: ${error}`, "error");
         });
+        onPatchTakes((ts) => ts.map((t) => (results.has(t.file) ? { ...t, stt: results.get(t.file)! } : t)));
+      } catch (e) {
+        failure = String(e);
+        for (const t of batch) errors[t.id] = failure;
       }
-      return sttChain.current;
+      if (!alive.current) return;
+      const ids = new Set(batch.map((t) => t.id));
+      // Bu sırada yeniden kuyruğa giren parça (ör. yeniden kaydedilen) meşgul kalır.
+      setStt((s) => ({ busy: new Set([...s.busy].filter((x) => !ids.has(x) || sttQueue.current.includes(x))), errors: { ...s.errors, ...errors } }));
+      if (failure) onToast(`Yazıya çevrilemedi${batch.length > 1 ? ` (${batch.length} parça)` : ""}: ${failure}`, "error");
+      else if (silent) onToast(silent === 1 && batch.length === 1 ? "Kayıtta konuşma bulunamadı" : `${silent} parçada konuşma bulunamadı`, "error");
     },
     [onPatchTakes, onToast],
   );
 
-  const needGroq = () => {
-    if (hasGroqKey) return false;
-    onToast("Yazıya çevirmek için Ayarlar'dan Groq API anahtarını girin", "error");
+  /**
+   * Parçaları yazıya çevirme kuyruğuna ekler. Kuyruktakiler tek tek değil, çizelge sırasıyla birleştirilip
+   * en fazla STT_BATCH_SEC'lik gruplar halinde gönderilir. Dönen söz kuyruk boşalınca çözülür.
+   */
+  const transcribe = useCallback(
+    (ids: string[]): Promise<void> => {
+      const add = ids.filter((id) => !sttQueue.current.includes(id));
+      if (add.length) {
+        sttQueue.current.push(...add);
+        setStt((s) => {
+          const busy = new Set(s.busy);
+          const errors = { ...s.errors };
+          for (const id of add) {
+            busy.add(id);
+            errors[id] = "";
+          }
+          return { busy, errors };
+        });
+      }
+      if (!sttRun.current && sttQueue.current.length) {
+        sttRun.current = (async () => {
+          while (sttQueue.current.length && alive.current) {
+            const queued = new Set(sttQueue.current.splice(0));
+            const list = takesRef.current.filter((t) => queued.has(t.id));
+            const gone = [...queued].filter((id) => !list.some((t) => t.id === id));
+            if (gone.length) setStt((s) => ({ ...s, busy: new Set([...s.busy].filter((x) => !gone.includes(x))) }));
+            for (const batch of packBatches(list, STT_BATCH_SEC, STT_GAP)) {
+              if (!alive.current) break;
+              await runBatch(batch);
+            }
+          }
+          sttRun.current = null;
+        })();
+      }
+      return sttRun.current ?? Promise.resolve();
+    },
+    [runBatch],
+  );
+
+  const needStt = () => {
+    if (sttOk) return false;
+    onToast(sttMissingMessage(settingsRef.current), "error");
     onOpenSettings();
     return true;
   };
 
   const transcribeMissing = async () => {
-    if (needGroq()) return;
+    if (needStt()) return;
     const ids = takes.filter((t) => !t.stt && !stt.busy.has(t.id)).map((t) => t.id);
     if (!ids.length) return onToast("Tüm parçalar zaten yazıya çevrilmiş");
     await transcribe(ids);
@@ -384,10 +440,10 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     if (!takes.length) return;
     const missing = takes.filter((t) => !t.stt).map((t) => t.id);
     if (missing.length) {
-      if (needGroq()) return;
+      if (needStt()) return;
       onToast(`${missing.length} parça önce yazıya çevriliyor…`);
+      // Hâlihazırda gönderilenler yeniden eklenmez; dönen söz onların bitmesini de bekler.
       await transcribe(missing.filter((id) => !stt.busy.has(id)));
-      await sttChain.current;
       if (!alive.current) return;
     }
     const list = takesRef.current.map((t) => (t.stt ? t : { ...t, stt: fresh.current.get(t.file) ?? null }));
@@ -507,13 +563,13 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       setRec(null);
       setSel(id);
       if (r.peak < 0.02) onToast("Kayıt neredeyse sessiz; Ayarlar › Ses kaydı'ndan mikrofonu kontrol et", "error");
-      if (settingsRef.current.voiceAutoTranscribe && hasGroqKey) void transcribe([id]);
+      if (settingsRef.current.voiceAutoTranscribe && sttOk) void transcribe([id]);
     } catch (e) {
       if (!alive.current) return;
       setRec({ ...state, phase: "ready" });
       onToast(`Kayıt kaydedilemedi: ${e}`, "error");
     }
-  }, [dropFile, hasGroqKey, onPatchTakes, onToast, transcribe]);
+  }, [dropFile, sttOk, onPatchTakes, onToast, transcribe]);
 
   /** Süren kaydı atar (diske hiçbir şey yazılmaz); aynı yer için hemen yeniden kayıt alınabilir. */
   const cancelRec = useCallback(() => {
@@ -635,6 +691,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLElement && e.target.closest("[data-keycapture]")) return;
+      // Tam ekran video / kare görüntüleyici açıkken hiçbir kısayol bu panele gelmez.
+      const claim = keysClaimed();
+      if (claim === "exclusive") return;
       const r = recRef.current;
       const k = voiceKeys(settingsRef.current);
       const consume = () => {
@@ -662,7 +721,8 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
         }
         return;
       }
-      if (!visible) return;
+      // Video odaktayken / fare üzerindeyken Boşluk ve oklar videonundur.
+      if (!visible || claim === "local") return;
       const tl = timelineRef.current;
       const idx = tl.findIndex((i) => i.take.id === sel);
       if (matchCombo(e, k.record)) {
@@ -1008,9 +1068,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
             <p className="muted small">
               Aşağıdaki kırmızı düğme ya da <kbd>{kb("record")}</kbd> ile başla · <kbd>{kb("finish")}</kbd> bitir · <kbd>{kb("cancel")}</kbd> iptal
             </p>
-            {!hasGroqKey && (
+            {!sttOk && (
               <p className="muted small">
-                Yazıya çevirmek için <button className="link-btn" onClick={onOpenSettings}>Groq anahtarı</button> gerekir.
+                Yazıya çevirmek için <button className="link-btn" onClick={onOpenSettings}>{settings.sttEngine === "local" ? "yerel Whisper modeli" : "Groq anahtarı"}</button> gerekir.
               </p>
             )}
           </div>
@@ -1054,7 +1114,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
             Yeniden al <span className="muted">{kb("rerecord")}</span>
           </button>
           <button onClick={() => newRec(ctxTake.link ?? null, ctxIndex + 1)}>Sonrasına yeni kayıt</button>
-          <button onClick={() => !needGroq() && void transcribe([ctxTake.id])} disabled={stt.busy.has(ctxTake.id)}>
+          <button onClick={() => !needStt() && void transcribe([ctxTake.id])} disabled={stt.busy.has(ctxTake.id)}>
             {ctxTake.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}
           </button>
           <button onClick={() => void exportAudio(ctxTake)}>Dosya olarak kaydet</button>

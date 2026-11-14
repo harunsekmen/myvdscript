@@ -115,7 +115,7 @@ export interface VoiceTake {
   label?: string; // kullanıcının verdiği ad
   /** Kaydın ilgili olduğu soldaki kaynak bölüm (kayıt başlarken seçili/görünen bölüm). */
   link?: { sourceId: string; segmentId: string; title: string };
-  /** Groq Whisper ile çıkarılan metin (yeniden kayıtta silinir). */
+  /** Whisper ile çıkarılan metin (yeniden kayıtta silinir). */
   stt?: { lang: string; text: string; words: VoiceWord[] } | null;
 }
 
@@ -198,6 +198,8 @@ export interface VideoStat {
   history: { t: number; views: number }[];
 }
 
+export type SttEngine = "groq" | "local";
+
 export type HomeSort = "updated" | "views" | "stage" | "created";
 export type StatsSource = "ytdlp" | "api" | "auto";
 
@@ -221,7 +223,11 @@ export interface Settings {
   segmentTint: number;
   chunkChars: number;
   lastProjectId: string;
-  sttLanguage: string; // Groq ses→yazı dili (boşsa otomatik)
+  sttLanguage: string; // ses→yazı dili (boşsa otomatik)
+  /** Ses → yazı motoru: Groq (bulut) ya da bu bilgisayarda çalışan Whisper. */
+  sttEngine: SttEngine;
+  /** Yerel Whisper modeli (ggml-<ad>.bin). */
+  whisperModel: string;
   cookiesBrowser: string; // yt-dlp çerez kaynağı: "" (yok) veya "firefox"
   stages: StageDef[];
   defaultChecklist: string[];
@@ -235,7 +241,7 @@ export interface Settings {
   voiceAutoGain: boolean;
   /** Kayıtların yazıya çevrilme dili; boşsa genel konuşma dili (sttLanguage) kullanılır. */
   voiceLanguage: string;
-  /** Kayıt bitince Groq ile otomatik yazıya çevir. */
+  /** Kayıt bitince otomatik yazıya çevir. */
   voiceAutoTranscribe: boolean;
   /** Tümü oynatılırken / tek dosyada birleştirilirken parçalar arasındaki sessizlik (ms). */
   voiceGapMs: number;

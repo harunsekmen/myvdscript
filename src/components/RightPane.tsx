@@ -4,7 +4,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api } from "../lib/api";
+import { api, onSttProgress } from "../lib/api";
+import { sttMissingMessage } from "../lib/stt";
 import { collectImagePaths, type CopyMode } from "../lib/copyExport";
 import { CopyButton } from "./CopyButton";
 import { speak } from "../lib/speech";
@@ -29,7 +30,8 @@ interface Props {
   tab: RightTab;
   onTab: (tab: RightTab) => void;
   settings: Settings;
-  hasGroqKey: boolean;
+  /** Ses → yazı motoru hazır mı (Groq anahtarı ya da yerel model). */
+  sttOk: boolean;
   onOpenSettings: () => void;
   onDoc: (doc: any) => void;
   onTimed: (doc: TimedDoc) => void;
@@ -49,11 +51,12 @@ const looksLikeMarkdown = (t: string) =>
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "opus", "wma", "mpeg", "mpga", "mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "ts"];
 
-export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
+export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   // Seçim balonu: dinle (kısa seçimlerde) ve AI notuna çevir/notu kaldır
   const [pick, setPick] = useState<{ text: string; x: number; y: number; speak: boolean; note: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sttPct, setSttPct] = useState<number | null>(null);
   const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
   const [placing, setPlacing] = useState<{ done: number; total: number } | null>(null);
   const [replacePath, setReplacePath] = useState<string | null>(null);
@@ -361,21 +364,24 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
   const transcribe = async (path: string) => {
     const name = path.split(/[\\/]/).pop() ?? "medya";
     setBusy(name);
+    setSttPct(null);
+    const unlisten = settings.sttEngine === "local" ? onSttProgress((p) => alive.current && setSttPct(p)) : null;
     try {
-      const r = await api.transcribeMedia(path, settings.sttLanguage);
+      const r = await api.transcribeMedia(path, settings.sttLanguage, settings.sttEngine, settings.whisperModel);
       if (!alive.current) return;
       if (!r.words.length) throw new Error("Konuşma bulunamadı");
       applyTimed(buildTimed(r.words, name, r.language || "?"), r.words.length);
     } catch (e) {
       if (alive.current) onToast(`Ses çevrilemedi: ${e}`, "error");
     } finally {
+      void unlisten?.then((f) => f());
       if (alive.current) setBusy(null);
     }
   };
 
   const addMedia = async () => {
-    if (!hasGroqKey) {
-      onToast("Önce Ayarlar'dan Groq API anahtarını girin", "error");
+    if (!sttOk) {
+      onToast(sttMissingMessage(settings), "error");
       onOpenSettings();
       return;
     }
@@ -452,7 +458,10 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
       </div>
       {busy && (
         <div className="banner busy">
-          <span>⏳ “{busy}” yazıya çevriliyor… (uzun dosyalarda birkaç dakika sürebilir)</span>
+          <span>
+            ⏳ “{busy}” yazıya çevriliyor{settings.sttEngine === "local" ? " (yerel Whisper)" : ""}…{" "}
+            {sttPct != null ? `%${sttPct}` : "(uzun dosyalarda birkaç dakika sürebilir)"}
+          </span>
         </div>
       )}
       {placing && (
@@ -485,7 +494,7 @@ export function RightPane({ project, tab, onTab, settings, hasGroqKey, onOpenSet
         project={project}
         visible={voiceTab}
         settings={settings}
-        hasGroqKey={hasGroqKey}
+        sttOk={sttOk}
         onShow={() => onTab("voice")}
         onPatchTakes={onPatchTakes}
         onToTimed={voiceToTimed}

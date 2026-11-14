@@ -1,5 +1,5 @@
 import { buildTimed, newId } from "./timed";
-import type { TimedDoc, TimedItem, VoiceTake } from "./types";
+import type { TimedDoc, TimedItem, VoiceTake, VoiceWord } from "./types";
 
 /** Soldaki bölümlerin mikrofon düğmesi bu olayı yayar (detail: VoiceTake["link"]); o bölüm için kayıt başlar. */
 export const VOICE_RECORD_EVENT = "voice:record";
@@ -121,4 +121,79 @@ export function groupTakes<T extends { take: VoiceTake }>(items: T[]): { segment
     else out.push({ segmentId: seg, title: it.take.link?.title ?? null, items: [it] });
   }
   return out;
+}
+
+// ---------------------------------------------------------------- Toplu yazıya çevirme
+
+/**
+ * Yazıya çevrilecek parçaları istek gruplarına ayırır: parçalar tek seste art arda (aralarında `gapSec` sessizlik)
+ * gönderilir; bir grup en fazla `maxSec` uzunluğundadır (tek başına daha uzun parça kendi grubunu oluşturur).
+ */
+export function packBatches<T extends { duration: number }>(items: T[], maxSec: number, gapSec: number): T[][] {
+  const out: T[][] = [];
+  let cur: T[] = [];
+  let len = 0;
+  for (const it of items) {
+    const add = (cur.length ? gapSec : 0) + Math.max(0, it.duration);
+    if (cur.length && len + add > maxSec) {
+      out.push(cur);
+      cur = [];
+      len = 0;
+    }
+    len += (cur.length ? gapSec : 0) + Math.max(0, it.duration);
+    cur.push(it);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/**
+ * Birleşik sesten gelen kelimeleri parçalara dağıtır. Kelime, orta noktasının düştüğü parçaya gider (aradaki
+ * sessizliğin ilk yarısı önceki, ikinci yarısı sonraki parçaya sayılır); zamanlar parçanın başına göredir.
+ */
+export function splitWords(
+  words: { word: string; start: number; end: number }[],
+  spans: { start: number; duration: number }[],
+): VoiceWord[][] {
+  const out: VoiceWord[][] = spans.map(() => []);
+  if (!spans.length) return out;
+  for (const w of words) {
+    const text = w.word.trim();
+    if (!text) continue;
+    const mid = (w.start + w.end) / 2;
+    let i = 0;
+    while (i < spans.length - 1) {
+      const end = spans[i].start + spans[i].duration;
+      const next = spans[i + 1].start;
+      if (mid < (end + next) / 2) break;
+      i++;
+    }
+    const sp = spans[i];
+    const s = Math.min(sp.duration, Math.max(0, w.start - sp.start));
+    const e = Math.min(sp.duration, Math.max(s, w.end - sp.start));
+    out[i].push({ w: text, s, e });
+  }
+  return out;
+}
+
+const normWord = (s: string) => s.toLocaleLowerCase("tr").replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Kelime listesinde noktalama yoksa, tam metindeki karşılığıyla değiştirir ("konuşalım" → "konuşalım.").
+ * Eşleşme bulunamayan kelime olduğu gibi kalır.
+ */
+export function alignPunctuation(text: string, words: string[]): string[] {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  let ti = 0;
+  return words.map((w) => {
+    const n = normWord(w);
+    if (!n) return w;
+    for (let k = ti; k < Math.min(tokens.length, ti + 6); k++) {
+      if (normWord(tokens[k]) === n) {
+        ti = k + 1;
+        return tokens[k];
+      }
+    }
+    return w;
+  });
 }

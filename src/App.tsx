@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ConfirmDialog, TextDialog } from "./components/Dialogs";
@@ -21,6 +21,8 @@ import { migrateStages } from "./lib/settingsDefaults";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
 import { activeSource, patchSource, removeSource, sourceLabel, subtitleLang } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
+import { refreshWhisper, subscribeWhisper, sttReady, whisperStatus } from "./lib/stt";
+import { keysClaimed } from "./lib/keyScope";
 import { disfluentWords } from "./lib/disfluency";
 import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc, VoiceTake } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
@@ -44,6 +46,13 @@ export default function App() {
   const settingsRef = useRef(settings);
   const [hasKey, setHasKey] = useState(false);
   const [hasGroqKey, setHasGroqKey] = useState(false);
+  const whisper = useSyncExternalStore(subscribeWhisper, whisperStatus);
+  /** Ses → yazı kullanılabilir mi (Groq anahtarı ya da indirilmiş yerel model)? */
+  const sttOk = useMemo(
+    () => sttReady(settings, hasGroqKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.sttEngine, settings.whisperModel, hasGroqKey, whisper],
+  );
   const [hasYoutubeKey, setHasYoutubeKey] = useState(false);
   const [view, setView] = useState<"home" | "project">("home");
   const [tab, setTab] = useState<RightTab>("write");
@@ -118,6 +127,7 @@ export default function App() {
       setSettings(s);
       setHasKey(await api.hasApiKey());
       setHasGroqKey(await api.hasGroqKey());
+      void refreshWhisper();
       setHasYoutubeKey(await api.hasYoutubeKey());
       await loadInitial();
       setReady(true);
@@ -274,6 +284,8 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey) return;
+      // Tam ekran video / kare görüntüleyici açıkken uygulama kısayolları çalışmaz.
+      if (keysClaimed() === "exclusive") return;
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpenSignal((n) => n + 1);
@@ -425,7 +437,7 @@ export default function App() {
               tab={tab}
               onTab={setTab}
               settings={settings}
-              hasGroqKey={hasGroqKey}
+              sttOk={sttOk}
               onOpenSettings={() => setShowSettings(true)}
               onDoc={onDoc}
               onTimed={onTimed}

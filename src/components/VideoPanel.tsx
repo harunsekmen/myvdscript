@@ -6,6 +6,7 @@ import { translatedSentenceAt } from "../lib/segmentParser";
 import type { Segment, Settings } from "../lib/types";
 import { attachFrame, getVideoState, pauseVideo, playAt, resumeVideo, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
+import { claimKeys } from "../lib/keyScope";
 
 interface Meta {
   title: string;
@@ -210,19 +211,49 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   }, [fs]);
 
   const shotOpen = shot != null;
+  // Klavye sahipliği: tam ekranda tüm kısayollar videonundur; video odaktayken / fare üzerindeyken
+  // Boşluk ve oklar videoya gider (ses kayıtları paneli bunları almaz).
+  const fsRef = useRef(fs);
+  fsRef.current = fs;
+  useEffect(
+    () =>
+      claimKeys(() => {
+        if (fsRef.current) return "exclusive";
+        if (!frameRef.current) return null;
+        return document.activeElement === overlayRef.current || hoverRef.current ? "local" : null;
+      }),
+    [],
+  );
+
   // Sol/sağ ok: video üzerindeyken, videoya tıklanmışken veya tam ekrandayken 5 sn geri/ileri sarar.
+  // Boşluk: aynı durumlarda oynat/duraklat.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const space = e.key === " " || e.code === "Space";
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && !space) return;
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || shotOpen) return;
       const t = e.target as HTMLElement | null;
       if (t?.classList.contains("vp-vol-range")) return;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) && !t.closest(".vf-bar")) return;
+      // Tam ekrandaki denetim çubuğunda odaklı düğmeye Boşluk basmak düğmeyi de tetikler; iki kez çalışmasın.
+      if (space && t instanceof HTMLButtonElement && t.closest(".video-frame")) return;
       const focused = document.activeElement === overlayRef.current;
       if (!fs && !focused && !hoverRef.current) return;
       const s = getVideoState();
       if (!s.ready || s.videoId !== id) return;
       e.preventDefault();
+      if (space) {
+        if (e.repeat) return;
+        if (s.playing) pauseVideo();
+        else {
+          try {
+            resumeVideo();
+          } catch {
+            /* oynatıcı hazır değil */
+          }
+        }
+        return;
+      }
       const d = e.key === "ArrowLeft" ? -SEEK_STEP : SEEK_STEP;
       seekTo(Math.min(s.duration || Infinity, Math.max(0, s.time + d)));
     };

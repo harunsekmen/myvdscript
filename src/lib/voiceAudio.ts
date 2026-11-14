@@ -88,6 +88,36 @@ export async function mergeToWav(projectId: string, files: string[], gapMs: numb
   return encodeWav(out, rate);
 }
 
+/**
+ * Yazıya çevirmek için parçaları tek, 16 kHz tek kanallı WAV'a dizer (aralarına `gapSec` sessizlik).
+ * Her parçanın birleşik sesteki başlangıcı ve (çözülmüş) süresi de döner; sonuç kelimeleri buna göre dağıtılır.
+ */
+export async function renderForStt(
+  projectId: string,
+  files: string[],
+  gapSec: number,
+  rate = 16000,
+): Promise<{ wav: Uint8Array; spans: { start: number; duration: number }[] }> {
+  const bufs = await Promise.all(files.map((f) => loadTake(projectId, f)));
+  const spans: { start: number; duration: number }[] = [];
+  let t = 0;
+  bufs.forEach((b, i) => {
+    if (i > 0) t += gapSec;
+    spans.push({ start: t, duration: b.duration });
+    t += b.duration;
+  });
+  const length = Math.max(1, Math.ceil(t * rate) + 1);
+  const off = new OfflineAudioContext(1, length, rate);
+  bufs.forEach((b, i) => {
+    const src = off.createBufferSource();
+    src.buffer = b;
+    src.connect(off.destination);
+    src.start(spans[i].start);
+  });
+  const out = await off.startRendering();
+  return { wav: encodeWav(out.getChannelData(0), rate), spans };
+}
+
 // ---------------------------------------------------------------- Oynatıcı
 
 export interface PlayItem {
