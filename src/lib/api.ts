@@ -29,13 +29,17 @@ export interface MediaWord {
 
 export interface WhisperStatus {
   engine: boolean;
+  /** Ekran kartı (CUDA) motoru indirildi mi? */
+  cuda: boolean;
+  /** Bulunan NVIDIA ekran kartının adı (yoksa null). */
+  gpu: string | null;
   models: { id: string; size: number }[];
   downloading: string | null;
   dir: string;
 }
 
 export interface WhisperProgress {
-  item: string; // "engine" ya da model adı
+  item: string; // "engine", "cuda" ya da model adı
   received: number;
   total: number;
   done: boolean;
@@ -76,15 +80,19 @@ export const api = {
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   hasGroqKey: () => invoke<boolean>("has_groq_key"),
   setGroqKey: (key: string) => invoke<void>("set_groq_key", { key }),
-  transcribeMedia: (path: string, language: string, engine: SttEngine, model: string) =>
-    invoke<MediaTranscript>("transcribe_media", { path, language, engine, model }),
+  transcribeMedia: (path: string, o: { language: string; engine: SttEngine; model: string; gpu: boolean; job?: string }) =>
+    invoke<MediaTranscript>("transcribe_media", { path, language: o.language, engine: o.engine, model: o.model, gpu: o.gpu, job: o.job ?? "" }),
   /** Birleşik 16 kHz WAV'ı yazıya çevirir (ham gövde). */
-  transcribeAudio: (wav: Uint8Array, o: { language: string; engine: SttEngine; model: string }) =>
-    invoke<MediaTranscript>("transcribe_audio", wav, { headers: { "x-language": o.language, "x-engine": o.engine, "x-model": o.model } }),
+  transcribeAudio: (wav: Uint8Array, o: { language: string; engine: SttEngine; model: string; gpu: boolean; job?: string }) =>
+    invoke<MediaTranscript>("transcribe_audio", wav, {
+      headers: { "x-language": o.language, "x-engine": o.engine, "x-model": o.model, "x-gpu": o.gpu ? "1" : "0", "x-job": o.job ?? "" },
+    }),
   whisperStatus: () => invoke<WhisperStatus>("whisper_status"),
   whisperDownload: (model: string) => invoke<void>("whisper_download", { model }),
   whisperCancelDownload: () => invoke<void>("whisper_cancel_download"),
   whisperDeleteModel: (model: string) => invoke<void>("whisper_delete_model", { model }),
+  whisperDownloadCuda: () => invoke<void>("whisper_download_cuda"),
+  whisperDeleteCuda: () => invoke<void>("whisper_delete_cuda"),
   listSubtitles: (url: string) => invoke<SubtitleList>("list_subtitles", { url }),
   fetchDefaultTranscript: (url: string) => invoke<Transcript>("fetch_default_transcript", { url }),
   fetchTranscript: (url: string, lang: string, auto: boolean) =>
@@ -198,7 +206,7 @@ export function onWhisperDownload(cb: (p: WhisperProgress) => void) {
   return listen<WhisperProgress>("whisper-download", (e) => cb(e.payload));
 }
 
-/** Yerel Whisper çeviri ilerlemesi (yüzde). */
-export function onSttProgress(cb: (percent: number) => void) {
-  return listen<number>("stt-progress", (e) => cb(e.payload));
+/** Yerel Whisper çeviri ilerlemesi: yalnızca verilen işin yüzdesi bildirilir. */
+export function onSttProgress(job: string, cb: (percent: number) => void) {
+  return listen<{ job: string; percent: number }>("stt-progress", (e) => e.payload.job === job && cb(e.payload.percent));
 }

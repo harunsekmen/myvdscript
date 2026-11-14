@@ -206,6 +206,44 @@ function LocalWhisper({ s, onChange }: { s: Settings; onChange: (patch: Partial<
   const sizeOf = (id: string) => st?.models.find((m) => m.id === id)?.size ?? 0;
   const ready = modelInstalled(s.whisperModel);
 
+  const downloadCuda = async () => {
+    setMsg(null);
+    setActive("cuda");
+    try {
+      await api.whisperDownloadCuda();
+      await refreshWhisper();
+      onChange({ whisperGpu: true });
+      setMsg({ text: "Ekran kartı paketi kuruldu; çeviri artık ekran kartında yapılacak" });
+    } catch (e) {
+      const t = String(e);
+      if (!t.includes("iptal")) setMsg({ text: t, err: true });
+      void refreshWhisper();
+    } finally {
+      setActive(null);
+      setProg(null);
+    }
+  };
+  const removeCuda = async () => {
+    try {
+      await api.whisperDeleteCuda();
+      await refreshWhisper();
+    } catch (e) {
+      setMsg({ text: String(e), err: true });
+    }
+  };
+  const cudaBusy = downloading === "cuda";
+  const progBox = (
+    <div className="wm-prog">
+      <div className="wm-bar">
+        <div style={{ width: `${pct ?? 0}%` }} />
+      </div>
+      <span className="muted tnum wm-pct">{prog?.item === "engine" ? "Motor…" : pct != null ? `%${Math.floor(pct)}` : "…"}</span>
+      <button className="btn small ghost" onClick={() => void api.whisperCancelDownload()}>
+        İptal
+      </button>
+    </div>
+  );
+
   return (
     <Card
       title="Yerel Whisper"
@@ -233,15 +271,7 @@ function LocalWhisper({ s, onChange }: { s: Settings; onChange: (patch: Partial<
                 </button>
                 <span className="wm-size muted tnum">{have ? fmtMB(sizeOf(m.id)) : m.size}</span>
                 {busy ? (
-                  <div className="wm-prog">
-                    <div className="wm-bar">
-                      <div style={{ width: `${pct ?? 0}%` }} />
-                    </div>
-                    <span className="muted tnum wm-pct">{prog?.item === "engine" ? "Motor…" : pct != null ? `%${Math.floor(pct)}` : "…"}</span>
-                    <button className="btn small ghost" onClick={() => void api.whisperCancelDownload()}>
-                      İptal
-                    </button>
-                  </div>
+                  progBox
                 ) : have ? (
                   <button className="btn small ghost danger" onClick={() => void remove(m.id)} disabled={!!downloading}>
                     Sil
@@ -256,6 +286,44 @@ function LocalWhisper({ s, onChange }: { s: Settings; onChange: (patch: Partial<
           })}
         </div>
         <Status msg={msg} />
+      </Row>
+      <Row
+        label="Hızlandırma"
+        desc={
+          !st?.gpu
+            ? "NVIDIA ekran kartı bulunamadı; çeviri işlemcide yapılır."
+            : st.cuda
+              ? `${st.gpu} kullanılabilir. Ekran kartında çeviri işlemciye göre çok daha hızlıdır.`
+              : `${st.gpu} bulundu. Ekran kartı paketi (~670 MB, CUDA dahil) indirilirse çeviri çok daha hızlı olur.`
+        }
+        aside={st?.cuda ? <span className="s-pill ok">CUDA kurulu</span> : undefined}
+        wide
+      >
+        {st?.gpu && (
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {st.cuda ? (
+              <>
+                <Segmented
+                  value={s.whisperGpu !== false ? "gpu" : "cpu"}
+                  options={[
+                    { v: "gpu", label: "Ekran kartı" },
+                    { v: "cpu", label: "İşlemci" },
+                  ]}
+                  onChange={(v) => onChange({ whisperGpu: v === "gpu" })}
+                />
+                <button className="btn small ghost danger" onClick={() => void removeCuda()} disabled={!!downloading}>
+                  Paketi sil
+                </button>
+              </>
+            ) : cudaBusy ? (
+              progBox
+            ) : (
+              <button className="btn small" onClick={() => void downloadCuda()} disabled={!!downloading}>
+                Ekran kartı paketini indir
+              </button>
+            )}
+          </div>
+        )}
       </Row>
     </Card>
   );

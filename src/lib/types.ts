@@ -228,6 +228,8 @@ export interface Settings {
   sttEngine: SttEngine;
   /** Yerel Whisper modeli (ggml-<ad>.bin). */
   whisperModel: string;
+  /** CUDA paketi indirildiyse yerel Whisper'ı NVIDIA ekran kartında çalıştır. */
+  whisperGpu: boolean;
   cookiesBrowser: string; // yt-dlp çerez kaynağı: "" (yok) veya "firefox"
   stages: StageDef[];
   defaultChecklist: string[];

@@ -70,6 +70,8 @@ pub fn run() {
             whisper::whisper_download,
             whisper::whisper_cancel_download,
             whisper::whisper_delete_model,
+            whisper::whisper_download_cuda,
+            whisper::whisper_delete_cuda,
             transcript::list_subtitles,
             transcript::fetch_transcript,
             transcript::fetch_default_transcript,

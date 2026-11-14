@@ -53,6 +53,11 @@ export function sttMissingMessage(s: Pick<Settings, "sttEngine">): string {
     : "Yazıya çevirmek için Ayarlar'dan Groq API anahtarını girin";
 }
 
-export function sttOptions(s: Pick<Settings, "sttEngine" | "whisperModel">, language: string) {
-  return { language, engine: s.sttEngine, model: s.whisperModel };
+export function sttOptions(s: Pick<Settings, "sttEngine" | "whisperModel" | "whisperGpu">, language: string) {
+  return { language, engine: s.sttEngine, model: s.whisperModel, gpu: s.whisperGpu !== false };
+}
+
+/** Yerel Whisper ekran kartında mı çalışacak (CUDA paketi indirilmiş ve ayar açık)? */
+export function whisperOnGpu(s: Pick<Settings, "whisperGpu">): boolean {
+  return !!status?.cuda && s.whisperGpu !== false;
 }

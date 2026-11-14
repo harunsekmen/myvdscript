@@ -21,6 +21,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 /// Sabit sürüm: en son sürüm sayfası bazen boş (ekleri ayrı derleme etiketlerinde) yayımlanıyor.
 const ENGINE_URL: &str = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip";
+/// NVIDIA ekran kartı için CUDA 12.4 derlemesi (CUDA çalışma zamanı DLL'leri pakette; yalnızca sürücü gerekir).
+const CUDA_URL: &str = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-cublas-12.4.0-bin-x64.zip";
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 /// İndirilebilen modeller (ggml-<ad>.bin).
 const MODELS: &[&str] = &[
@@ -40,11 +42,30 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 fn root() -> PathBuf {
     store::root().join("whisper")
 }
-fn bin_dir() -> PathBuf {
-    root().join("bin")
+/// İşlemci (`bin`) ya da CUDA (`bin-cuda`) motorunun klasörü.
+fn bin_dir(cuda: bool) -> PathBuf {
+    root().join(if cuda { "bin-cuda" } else { "bin" })
 }
-fn cli_path() -> PathBuf {
-    bin_dir().join(if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" })
+fn cli_path(cuda: bool) -> PathBuf {
+    bin_dir(cuda).join(if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" })
+}
+
+/// NVIDIA ekran kartının adı (nvidia-smi ile; sürücü yoksa None). Bir kez sorgulanır.
+fn nvidia_gpu() -> Option<String> {
+    static GPU: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    GPU.get_or_init(|| {
+        let mut cmd = std::process::Command::new("nvidia-smi");
+        cmd.args(["--query-gpu=name", "--format=csv,noheader"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        let out = cmd.output().ok().filter(|o| o.status.success())?;
+        let name = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+        (!name.is_empty()).then_some(name)
+    })
+    .clone()
 }
 fn models_dir() -> PathBuf {
     root().join("models")
@@ -77,7 +98,9 @@ pub fn whisper_status() -> Value {
         })
         .collect();
     json!({
-        "engine": cli_path().is_file(),
+        "engine": cli_path(false).is_file(),
+        "cuda": cli_path(true).is_file(),
+        "gpu": nvidia_gpu(),
         "models": models,
         "downloading": DOWNLOADING.lock().ok().and_then(|g| g.clone()),
         "dir": root().to_string_lossy(),
@@ -99,6 +122,38 @@ pub fn whisper_delete_model(model: String) -> Result<(), String> {
         fs::remove_file(p).map_err(|e| format!("Model silinemedi: {e}"))?;
     }
     Ok(())
+}
+
+/// İndirilmiş CUDA motorunu siler (işlemci motoru kalır).
+#[tauri::command]
+pub fn whisper_delete_cuda() -> Result<(), String> {
+    if DOWNLOADING.lock().ok().and_then(|g| g.clone()).as_deref() == Some("cuda") {
+        return Err("CUDA paketi şu an indiriliyor".into());
+    }
+    let dir = bin_dir(true);
+    if dir.is_dir() {
+        fs::remove_dir_all(dir).map_err(|e| format!("CUDA paketi silinemedi: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Ekran kartı (CUDA) motorunu indirir. İlerleme `whisper-download` olayıyla ("cuda") bildirilir.
+#[tauri::command]
+pub async fn whisper_download_cuda(app: AppHandle) -> Result<(), String> {
+    {
+        let mut g = DOWNLOADING.lock().map_err(|e| e.to_string())?;
+        if g.is_some() {
+            return Err("Başka bir indirme sürüyor".into());
+        }
+        *g = Some("cuda".into());
+    }
+    let _guard = DownloadGuard;
+    CANCEL.store(false, Ordering::SeqCst);
+    let result = install_engine(&app, true).await;
+    if let Err(e) = &result {
+        let _ = app.emit("whisper-download", Progress { item: "cuda".into(), received: 0, total: 0, done: true, error: Some(e.clone()) });
+    }
+    result
 }
 
 struct DownloadGuard;
@@ -125,8 +180,8 @@ pub async fn whisper_download(app: AppHandle, model: String) -> Result<(), Strin
     CANCEL.store(false, Ordering::SeqCst);
 
     let result = async {
-        if !cli_path().is_file() {
-            install_engine(&app).await?;
+        if !cli_path(false).is_file() {
+            install_engine(&app, false).await?;
         }
         if !target.is_file() {
             let url = format!("{MODEL_URL}/ggml-{model}.bin");
@@ -144,28 +199,29 @@ pub async fn whisper_download(app: AppHandle, model: String) -> Result<(), Strin
     result
 }
 
-async fn install_engine(app: &AppHandle) -> Result<(), String> {
-    let zip_path = root().join("engine.zip");
-    download(app, "engine", ENGINE_URL, &zip_path).await?;
+async fn install_engine(app: &AppHandle, cuda: bool) -> Result<(), String> {
+    let zip_path = root().join(if cuda { "engine-cuda.zip" } else { "engine.zip" });
+    let (item, url) = if cuda { ("cuda", CUDA_URL) } else { ("engine", ENGINE_URL) };
+    download(app, item, url, &zip_path).await?;
     let res = tauri::async_runtime::spawn_blocking({
         let zip_path = zip_path.clone();
-        move || extract_engine(&zip_path)
+        move || extract_engine(&zip_path, cuda)
     })
     .await
     .map_err(|e| e.to_string())?;
     let _ = fs::remove_file(&zip_path);
     res?;
-    if !cli_path().is_file() {
+    if !cli_path(cuda).is_file() {
         return Err("İndirilen pakette whisper-cli bulunamadı".into());
     }
     Ok(())
 }
 
-/// Zip içinden yalnızca whisper-cli ve DLL'leri düz biçimde `bin/` klasörüne çıkarır.
-fn extract_engine(zip_path: &Path) -> Result<(), String> {
+/// Zip içinden yalnızca whisper-cli ve DLL'leri düz biçimde motor klasörüne çıkarır.
+fn extract_engine(zip_path: &Path, cuda: bool) -> Result<(), String> {
     let f = fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("Paket açılamadı: {e}"))?;
-    let tmp = root().join("bin.tmp");
+    let tmp = root().join(if cuda { "bin-cuda.tmp" } else { "bin.tmp" });
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
@@ -182,7 +238,7 @@ fn extract_engine(zip_path: &Path) -> Result<(), String> {
         let mut out = fs::File::create(tmp.join(&name)).map_err(|e| e.to_string())?;
         std::io::copy(&mut entry, &mut out).map_err(|e| format!("Paket çıkarılamadı: {e}"))?;
     }
-    let bin = bin_dir();
+    let bin = bin_dir(cuda);
     let _ = fs::remove_dir_all(&bin);
     fs::rename(&tmp, &bin).map_err(|e| format!("Motor kurulamadı: {e}"))
 }
@@ -248,15 +304,29 @@ async fn download(app: &AppHandle, item: &str, url: &str, target: &Path) -> Resu
 /// Yerel çeviri hazır mı (motor ve model indirilmiş mi)?
 pub fn ready(model: &str) -> Result<PathBuf, String> {
     let p = model_path(model)?;
-    if !cli_path().is_file() || !p.is_file() {
+    if !(cli_path(false).is_file() || cli_path(true).is_file()) || !p.is_file() {
         return Err("Yerel Whisper modeli indirilmemiş (Ayarlar › Ses ve YouTube bölümünden indirin)".into());
     }
     Ok(p)
 }
 
 /// 16 kHz mono WAV dosyasını yerel Whisper ile kelime zamanlı metne çevirir.
-/// İlerleme `stt-progress` olayıyla (yüzde) bildirilir.
-pub async fn transcribe(app: &AppHandle, wav: &Path, language: &str, model: &str) -> Result<Value, String> {
+/// İlerleme `stt-progress` olayıyla bildirilir: { job, percent } (aynı anda süren işler karışmasın diye
+/// çağıranın verdiği iş kimliğiyle).
+/// `gpu`: CUDA motoru indirilmişse ekran kartında çalıştırır; başarısız olursa işlemciyle yeniden dener.
+pub async fn transcribe(app: &AppHandle, wav: &Path, language: &str, model: &str, job: &str, gpu: bool) -> Result<Value, String> {
+    let use_cuda = gpu && cli_path(true).is_file();
+    if use_cuda {
+        match run(app, wav, language, model, job, true).await {
+            Ok(v) => return Ok(v),
+            Err(e) if cli_path(false).is_file() => eprintln!("CUDA ile çevrilemedi, işlemciye geçiliyor: {e}"),
+            Err(e) => return Err(e),
+        }
+    }
+    run(app, wav, language, model, job, false).await
+}
+
+async fn run(app: &AppHandle, wav: &Path, language: &str, model: &str, job: &str, cuda: bool) -> Result<Value, String> {
     let model_file = ready(model)?;
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -267,13 +337,19 @@ pub async fn transcribe(app: &AppHandle, wav: &Path, language: &str, model: &str
         l => l.to_ascii_lowercase(),
     };
 
-    let mut cmd = tokio::process::Command::new(cli_path());
-    cmd.current_dir(bin_dir())
+    let mut cmd = tokio::process::Command::new(cli_path(cuda));
+    cmd.current_dir(bin_dir(cuda))
         .arg("-m")
         .arg(&model_file)
         .arg("-f")
         .arg(wav)
-        .args(["-l", &lang, "-t", &threads.to_string(), "-oj", "-ml", "1", "-sow", "-pp"])
+        .args(["-l", &lang, "-t", &threads.to_string(), "-oj", "-ml", "1", "-sow", "-pp"]);
+    // İşlemcide 5 ışınlı arama yerine tek yol (greedy): birkaç kat hızlı, doğruluk farkı küçük.
+    // Ekran kartında süre zaten kısa; varsayılan ışın araması korunur.
+    if !cuda {
+        cmd.args(["-bs", "1", "-bo", "1"]);
+    }
+    cmd
         .arg("-of")
         .arg(&out_base)
         .stdout(std::process::Stdio::piped())
@@ -290,13 +366,21 @@ pub async fn transcribe(app: &AppHandle, wav: &Path, language: &str, model: &str
         let mut sink = Vec::new();
         let _ = stdout.read_to_end(&mut sink).await;
     });
-    let app2 = app.clone();
+    let emit = {
+        let app = app.clone();
+        let job = job.to_string();
+        move |p: u32| {
+            let _ = app.emit("stt-progress", json!({ "job": job, "percent": p.min(100) }));
+        }
+    };
+    emit(0);
+    let emit2 = emit.clone();
     let err_task = tokio::spawn(async move {
         let mut lines = tokio::io::BufReader::new(stderr).lines();
         let mut tail: Vec<String> = Vec::new();
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(p) = line.split("progress =").nth(1).and_then(|s| s.trim().trim_end_matches('%').trim().parse::<u32>().ok()) {
-                let _ = app2.emit("stt-progress", p);
+                emit2(p);
             }
             tail.push(line);
             if tail.len() > 20 {

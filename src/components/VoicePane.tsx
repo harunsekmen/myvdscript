@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { api } from "../lib/api";
+import { api, onSttProgress } from "../lib/api";
 import { matchCombo, prettyCombo } from "../lib/keys";
 import { voiceKeys } from "../lib/settingsDefaults";
 import { VOICE_RECORD_EVENT, alignPunctuation, buildTimeline, fmtDur, groupTakes, locate, moveTake, packBatches, splitWords, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
 import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, renderForStt, VoicePlayer } from "../lib/voiceAudio";
-import { sttMissingMessage, sttOptions } from "../lib/stt";
+import { sttMissingMessage, sttOptions, whisperOnGpu } from "../lib/stt";
 import { keysClaimed } from "../lib/keyScope";
 import type { Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
 
@@ -120,37 +120,41 @@ function Meter({ level }: { level: number }) {
 
 // ---------------------------------------------------------------- İkonlar
 
+/**
+ * Yüzen düğme simgeleri: hepsi 24'lük ızgarada (12,12) merkezine göre çizilir ve aynı boyutta gösterilir.
+ * Oynat üçgeni görsel olarak ortalı dursun diye ağırlık merkezi hafif sağdadır.
+ */
+const icon = (children: React.ReactNode, size = 16) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className="fb-ico">
+    {children}
+  </svg>
+);
 const I = {
   rec: <span className="fb-dot" />,
-  play: (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-      <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
-    </svg>
+  play: icon(<path d="M8.9 5.6v12.8L19.4 12z" fill="currentColor" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />),
+  pause: icon(
+    <>
+      <rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+      <rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+    </>,
   ),
-  pause: (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-      <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />
-    </svg>
+  stop: icon(<rect x="6" y="6" width="12" height="12" rx="2.2" fill="currentColor" />),
+  close: icon(<path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />),
+  redo: icon(
+    <path
+      d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />,
   ),
-  stop: (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-    </svg>
-  ),
-  close: (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
-  ),
-  redo: (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v5h5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ),
-  start: (
-    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-      <path d="M6 5v14M18 6l-9 6 9 6z" stroke="currentColor" strokeWidth="2" fill="currentColor" strokeLinejoin="round" />
-    </svg>
+  start: icon(
+    <>
+      <rect x="5.2" y="6" width="2.4" height="12" rx="1" fill="currentColor" />
+      <path d="M18.2 6.4v11.2L9.7 12z" fill="currentColor" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </>,
   ),
 };
 
@@ -188,6 +192,9 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   /** Yazıya çevrilmeyi bekleyen parçalar ve onları toplu gönderen döngü. */
   const sttQueue = useRef<string[]>([]);
   const sttRun = useRef<Promise<void> | null>(null);
+  /** Süren çevirinin ilerlemesi (sn ve parça olarak); yerel Whisper yüzdesi gelen grubu içinde ilerletir. */
+  const sttTotals = useRef({ doneSec: 0, totalSec: 0, doneTakes: 0, totalTakes: 0 });
+  const [sttProg, setSttProg] = useState<{ pct: number; done: number; total: number } | null>(null);
   /** Son çeviri sonuçları (dosya → metin): proje durumu henüz yeniden çizilmeden okunabilsin diye. */
   const fresh = useRef(new Map<string, NonNullable<VoiceTake["stt"]>>());
   const [undo, setUndo] = useState<{ take: VoiceTake; index: number } | null>(null);
@@ -351,9 +358,20 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       const errors: Record<string, string> = {};
       let failure = "";
       let silent = 0;
+      const tot = sttTotals.current;
+      const batchSec = batch.reduce((n, t) => n + Math.max(0, t.duration), 0);
+      const show = (inBatch: number) =>
+        setSttProg({
+          pct: Math.min(100, ((tot.doneSec + (batchSec * inBatch) / 100) / Math.max(0.01, tot.totalSec)) * 100),
+          done: tot.doneTakes,
+          total: tot.totalTakes,
+        });
+      show(0);
+      const job = crypto.randomUUID();
+      const unlisten = st.sttEngine === "local" ? onSttProgress(job, (p) => alive.current && sttTotals.current === tot && show(p)) : null;
       try {
         const { wav, spans } = await renderForStt(projectRef.current.id, batch.map((t) => t.file), STT_GAP);
-        const r = await api.transcribeAudio(wav, sttOptions(st, lang));
+        const r = await api.transcribeAudio(wav, { ...sttOptions(st, lang), job });
         const fixed = alignPunctuation(r.text, r.words.map((w) => w.word.trim()));
         const parts = splitWords(r.words.map((w, i) => ({ ...w, word: fixed[i] })), spans);
         const results = new Map<string, NonNullable<VoiceTake["stt"]>>();
@@ -372,7 +390,11 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
         failure = String(e);
         for (const t of batch) errors[t.id] = failure;
       }
+      void unlisten?.then((f) => f());
+      tot.doneSec += batchSec;
+      tot.doneTakes += batch.length;
       if (!alive.current) return;
+      show(0);
       const ids = new Set(batch.map((t) => t.id));
       // Bu sırada yeniden kuyruğa giren parça (ör. yeniden kaydedilen) meşgul kalır.
       setStt((s) => ({ busy: new Set([...s.busy].filter((x) => !ids.has(x) || sttQueue.current.includes(x))), errors: { ...s.errors, ...errors } }));
@@ -391,6 +413,9 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       const add = ids.filter((id) => !sttQueue.current.includes(id));
       if (add.length) {
         sttQueue.current.push(...add);
+        const tot = sttTotals.current;
+        tot.totalTakes += add.length;
+        tot.totalSec += add.reduce((n, id) => n + Math.max(0, takesRef.current.find((t) => t.id === id)?.duration ?? 0), 0);
         setStt((s) => {
           const busy = new Set(s.busy);
           const errors = { ...s.errors };
@@ -407,6 +432,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
             const queued = new Set(sttQueue.current.splice(0));
             const list = takesRef.current.filter((t) => queued.has(t.id));
             const gone = [...queued].filter((id) => !list.some((t) => t.id === id));
+            sttTotals.current.totalTakes -= gone.length;
             if (gone.length) setStt((s) => ({ ...s, busy: new Set([...s.busy].filter((x) => !gone.includes(x))) }));
             for (const batch of packBatches(list, STT_BATCH_SEC, STT_GAP)) {
               if (!alive.current) break;
@@ -414,6 +440,8 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
             }
           }
           sttRun.current = null;
+          sttTotals.current = { doneSec: 0, totalSec: 0, doneTakes: 0, totalTakes: 0 };
+          if (alive.current) setSttProg(null);
         })();
       }
       return sttRun.current ?? Promise.resolve();
@@ -1043,6 +1071,19 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {sttProg && (
+        <div className="vp-stt" title="Yazıya çevirme ilerlemesi">
+          <span>
+            Yazıya çevriliyor{settings.sttEngine === "local" ? ` (yerel Whisper${whisperOnGpu(settings) ? " · ekran kartı" : ""})` : ""} · {sttProg.done}/
+            {sttProg.total} parça
+            {settings.sttEngine === "local" ? ` · %${Math.floor(sttProg.pct)}` : ""}
+          </span>
+          <div className="stt-bar">
+            <div style={{ width: `${sttProg.pct}%` }} />
           </div>
         </div>
       )}

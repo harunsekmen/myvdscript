@@ -5,7 +5,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, onSttProgress } from "../lib/api";
-import { sttMissingMessage } from "../lib/stt";
+import { sttMissingMessage, sttOptions, whisperOnGpu } from "../lib/stt";
 import { collectImagePaths, type CopyMode } from "../lib/copyExport";
 import { CopyButton } from "./CopyButton";
 import { speak } from "../lib/speech";
@@ -365,9 +365,10 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
     const name = path.split(/[\\/]/).pop() ?? "medya";
     setBusy(name);
     setSttPct(null);
-    const unlisten = settings.sttEngine === "local" ? onSttProgress((p) => alive.current && setSttPct(p)) : null;
+    const job = crypto.randomUUID();
+    const unlisten = settings.sttEngine === "local" ? onSttProgress(job, (p) => alive.current && setSttPct(p)) : null;
     try {
-      const r = await api.transcribeMedia(path, settings.sttLanguage, settings.sttEngine, settings.whisperModel);
+      const r = await api.transcribeMedia(path, { ...sttOptions(settings, settings.sttLanguage), job });
       if (!alive.current) return;
       if (!r.words.length) throw new Error("Konuşma bulunamadı");
       applyTimed(buildTimed(r.words, name, r.language || "?"), r.words.length);
@@ -459,9 +460,18 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
       {busy && (
         <div className="banner busy">
           <span>
-            ⏳ “{busy}” yazıya çevriliyor{settings.sttEngine === "local" ? " (yerel Whisper)" : ""}…{" "}
-            {sttPct != null ? `%${sttPct}` : "(uzun dosyalarda birkaç dakika sürebilir)"}
+            ⏳ “{busy}” yazıya çevriliyor
+            {settings.sttEngine === "local"
+              ? sttPct != null
+                ? ` (yerel Whisper${whisperOnGpu(settings) ? " · ekran kartı" : ""}) · %${sttPct}`
+                : ` (yerel Whisper${whisperOnGpu(settings) ? " · ekran kartı" : ""}) · ses hazırlanıyor…`
+              : "… (uzun dosyalarda birkaç dakika sürebilir)"}
           </span>
+          {sttPct != null && (
+            <div className="stt-bar">
+              <div style={{ width: `${sttPct}%` }} />
+            </div>
+          )}
         </div>
       )}
       {placing && (

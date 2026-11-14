@@ -91,13 +91,21 @@ pub fn ffmpeg_path() -> std::path::PathBuf {
 /// Yerel: her dosya ffmpeg ile 16 kHz WAV'a çevrilir.
 /// Dönüş: { language, duration, text, words: [{ word, start, end }] }
 #[tauri::command]
-pub async fn transcribe_media(app: AppHandle, path: String, language: String, engine: Option<String>, model: Option<String>) -> Result<Value, String> {
+pub async fn transcribe_media(
+    app: AppHandle,
+    path: String,
+    language: String,
+    engine: Option<String>,
+    model: Option<String>,
+    job: Option<String>,
+    gpu: Option<bool>,
+) -> Result<Value, String> {
     let file = Path::new(&path);
     if engine.as_deref() == Some("local") {
         let model = model.unwrap_or_default();
         whisper::ready(&model)?;
         let wav = to_wav16(file).await?;
-        let res = whisper::transcribe(&app, &wav, &language, &model).await;
+        let res = whisper::transcribe(&app, &wav, &language, &model, job.as_deref().unwrap_or(""), gpu.unwrap_or(true)).await;
         let _ = std::fs::remove_file(&wav);
         return res;
     }
@@ -143,13 +151,15 @@ fn header<'a>(req: &'a Request<'_>, name: &str) -> Option<&'a str> {
 }
 
 /// Ön yüzde birleştirilmiş 16 kHz WAV'ı (ham gövde) yazıya çevirir. Başlıklar: `x-language`, `x-engine`
-/// ("groq" | "local"), `x-model` (yerel model). Ses kayıtları parça parça değil, birkaç parça bir arada
+/// ("groq" | "local"), `x-model` (yerel model), `x-job` (yerel ilerleme olaylarının iş kimliği), `x-gpu` ("0" ise ekran kartı kullanılmaz). Ses kayıtları parça parça değil, birkaç parça bir arada
 /// gönderilir; zamanlar bu birleşik sese göredir.
 #[tauri::command]
 pub async fn transcribe_audio(app: AppHandle, request: Request<'_>) -> Result<Value, String> {
     let language = header(&request, "x-language").unwrap_or("").to_string();
     let engine = header(&request, "x-engine").unwrap_or("groq").to_string();
     let model = header(&request, "x-model").unwrap_or("").to_string();
+    let job = header(&request, "x-job").unwrap_or("").to_string();
+    let gpu = header(&request, "x-gpu") != Some("0");
     let bytes = match request.body() {
         InvokeBody::Raw(b) => b.clone(),
         InvokeBody::Json(_) => return Err("Ham ses verisi bekleniyordu".into()),
@@ -162,7 +172,7 @@ pub async fn transcribe_audio(app: AppHandle, request: Request<'_>) -> Result<Va
         whisper::ready(&model)?;
         let wav = temp_path("wav");
         std::fs::write(&wav, &bytes).map_err(|e| format!("Geçici dosya yazılamadı: {e}"))?;
-        let res = whisper::transcribe(&app, &wav, &language, &model).await;
+        let res = whisper::transcribe(&app, &wav, &language, &model, &job, gpu).await;
         let _ = std::fs::remove_file(&wav);
         return res;
     }
