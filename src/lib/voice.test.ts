@@ -72,3 +72,18 @@ describe("wav", () => {
     expect(v.getInt16(48, true)).toBe(-32768);
   });
 });
+
+describe("paragraflar", () => {
+  it("ardışık aynı bölüm parçalarını gruplar", async () => {
+    const { groupTakes } = await import("./voice");
+    const l = (segmentId: string) => ({ sourceId: "s", segmentId, title: segmentId.toUpperCase() });
+    const items = [take("a", 1, { link: l("x") }), take("b", 1, { link: l("x") }), take("c", 1), take("d", 1, { link: l("x") })].map((t) => ({ take: t }));
+    const g = groupTakes(items);
+    expect(g.map((p) => [p.segmentId, p.items.length])).toEqual([
+      ["x", 2],
+      [null, 1],
+      ["x", 1],
+    ]);
+    expect(g[0].title).toBe("X");
+  });
+});

@@ -35,6 +35,12 @@ export function primeTake(projectId: string, file: string, buf: AudioBuffer) {
   buffers.set(key(projectId, file), Promise.resolve(buf));
 }
 
+/** Projenin çözülmüş seslerini bellekten atar (proje kapanırken / dosya silinince). */
+export function forgetTakes(projectId: string, file?: string) {
+  if (file) buffers.delete(key(projectId, file));
+  else for (const k of [...buffers.keys()]) if (k.startsWith(`${projectId}/`)) buffers.delete(k);
+}
+
 /** Kanalların ortalaması. */
 export function monoOf(buf: AudioBuffer): Float32Array {
   if (buf.numberOfChannels === 1) return buf.getChannelData(0);

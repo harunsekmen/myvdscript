@@ -110,3 +110,15 @@ export function moveTake<T>(list: T[], from: number, to: number): T[] {
   next.splice(to > from ? to - 1 : to, 0, x);
   return next;
 }
+
+/** Ardışık, aynı bölüme bağlı parçaları bir paragrafta toplar (ses akışını metin gibi göstermek için). */
+export function groupTakes<T extends { take: VoiceTake }>(items: T[]): { segmentId: string | null; title: string | null; items: T[] }[] {
+  const out: { segmentId: string | null; title: string | null; items: T[] }[] = [];
+  for (const it of items) {
+    const seg = it.take.link?.segmentId ?? null;
+    const last = out[out.length - 1];
+    if (last && last.segmentId === seg) last.items.push(it);
+    else out.push({ segmentId: seg, title: it.take.link?.title ?? null, items: [it] });
+  }
+  return out;
+}

@@ -515,7 +515,7 @@ export default function App() {
         </div>
       )}
       {dialog?.kind === "delete" && dialogMeta && (
-        <ConfirmDialog title="Projeyi sil" message={`“${dialogMeta.title}” ve resimleri kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
+        <ConfirmDialog title="Projeyi sil" message={`“${dialogMeta.title}”, resimleri ve ses kayıtları kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === "clear" && (
         <ConfirmDialog title="Tümünü temizle" message="Tüm projeler, scriptler ve kaydedilmiş resimler kalıcı olarak silinecek. Bu işlem geri alınamaz." confirmLabel="Hepsini sil" danger onConfirm={clearEverything} onCancel={() => setDialog(null)} />

@@ -77,6 +77,10 @@ pub fn save_voice_take(request: Request<'_>) -> Result<Value, String> {
     if bytes.is_empty() {
         return Err("Kayıt boş".into());
     }
+    // Proje silinmişse (kayıt sürerken silinen proje) klasörü yeniden yaratma.
+    if !store::project_dir(&project)?.join("project.json").is_file() {
+        return Err("Proje bulunamadı (silinmiş olabilir)".into());
+    }
     let dir = voice_dir(&project)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = format!("kayit-{}.{ext}", &uuid::Uuid::new_v4().simple().to_string()[..12]);

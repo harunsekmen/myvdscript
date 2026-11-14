@@ -2,8 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
-import { VOICE_RECORD_EVENT, buildTimeline, fmtDur, locate, moveTake, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
-import { loadTake, mergeToWav, peaksOf, primeTake, Recording, VoicePlayer } from "../lib/voiceAudio";
+import { VOICE_RECORD_EVENT, buildTimeline, fmtDur, groupTakes, locate, moveTake, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
+import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, VoicePlayer } from "../lib/voiceAudio";
 import type { Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
 
 export type VoiceLink = NonNullable<VoiceTake["link"]>;
@@ -29,6 +29,12 @@ interface RecState {
   count?: number;
 }
 type Play = { mode: "all" } | { mode: "take"; id: string };
+type View = "wave" | "text";
+
+/** Akıştaki parça genişliği: saniye başına piksel (çok kısa parçalar da tıklanabilir kalır). */
+const PX_PER_SEC = 7;
+const chipWidth = (sec: number) => Math.max(46, Math.round(sec * PX_PER_SEC));
+const VIEW_KEY = "voiceView";
 
 const isEditable = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
@@ -69,51 +75,37 @@ function scrollToSegment(segmentId: string) {
   el.classList.add("seg-flash");
 }
 
-// ---------------------------------------------------------------- Dalga formu
+// ---------------------------------------------------------------- Mini dalga formu
 
-type WaveProps = { projectId: string; file: string; progress: number | null; onSeek: (frac: number) => void };
-// Çalarken yalnız ilerleyen parçanın dalga formu yeniden çizilir (onSeek ref'lerden okuyan kararlı bir işleve gider).
-const Wave = memo(WaveView, (a, b) => a.projectId === b.projectId && a.file === b.file && a.progress === b.progress);
+type WaveProps = { projectId: string; file: string; bars: number; progress: number | null };
+// Çalarken yalnız ilerleyen parçanın dalga formu yeniden çizilir.
+const Wave = memo(WaveView, (a, b) => a.projectId === b.projectId && a.file === b.file && a.bars === b.bars && a.progress === b.progress);
 
-function WaveView({ projectId, file, progress, onSeek }: WaveProps) {
+function WaveView({ projectId, file, bars, progress }: WaveProps) {
   const [peaks, setPeaks] = useState<Float32Array | null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
     let alive = true;
     setErr(false);
     loadTake(projectId, file)
-      .then((b) => alive && setPeaks(peaksOf(b, 160)))
+      .then((b) => alive && setPeaks(peaksOf(b, bars)))
       .catch(() => alive && setErr(true));
     return () => {
       alive = false;
     };
-  }, [projectId, file]);
-  if (err) return <div className="vt-wave err">⚠ Kayıt dosyası okunamadı</div>;
-  const n = peaks?.length ?? 0;
+  }, [projectId, file, bars]);
+  if (err) return <span className="vc-err" title="Kayıt dosyası okunamadı">⚠</span>;
+  if (!peaks) return null;
+  const n = peaks.length;
   return (
-    <div
-      className="vt-wave"
-      onClick={(e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        onSeek(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)));
-      }}
-      title="Tıklanan yerden çal"
-    >
-      {peaks && (
-        <svg viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" aria-hidden="true">
-          {Array.from(peaks, (p, i) => {
-            const h = Math.max(3, p * 92);
-            const played = progress !== null && i / n < progress;
-            return <rect key={i} x={i + 0.15} y={50 - h / 2} width={0.7} height={h} className={played ? "on" : ""} />;
-          })}
-        </svg>
-      )}
-      {progress !== null && <div className="vt-head" style={{ left: `${progress * 100}%` }} />}
-    </div>
+    <svg className="vc-wave" viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" aria-hidden="true">
+      {Array.from(peaks, (p, i) => {
+        const h = Math.max(6, p * 90);
+        return <rect key={i} x={i + 0.2} y={50 - h / 2} width={0.6} height={h} className={progress !== null && i / n < progress ? "on" : ""} />;
+      })}
+    </svg>
   );
 }
-
-// ---------------------------------------------------------------- Seviye ölçer
 
 function Meter({ level }: { level: number }) {
   const db = level > 0 ? 20 * Math.log10(level) : -60;
@@ -139,7 +131,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   const { items: timeline, total } = useMemo(() => buildTimeline(takes, settings.voiceGapMs), [takes, settings.voiceGapMs]);
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
+  const paragraphs = useMemo(() => groupTakes(timeline), [timeline]);
 
+  const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === "text" ? "text" : "wave"));
   const [sel, setSel] = useState<string | null>(null);
   const [rec, setRec] = useState<RecState | null>(null);
   const recRef = useRef(rec);
@@ -154,28 +148,43 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   /** Son çeviri sonuçları (dosya → metin): proje durumu henüz yeniden çizilmeden okunabilsin diye. */
   const fresh = useRef(new Map<string, NonNullable<VoiceTake["stt"]>>());
   const [undo, setUndo] = useState<{ take: VoiceTake; index: number } | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
+  const undoRef = useRef(undo);
+  undoRef.current = undo;
+  const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [drag, setDrag] = useState<{ from: number; to: number | null } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; to: number | null; link: VoiceLink | null } | null>(null);
   const [exporting, setExporting] = useState(false);
   const alive = useRef(true);
-  const listRef = useRef<HTMLDivElement>(null);
+  const flowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
+
+  /** Silinen parçanın dosyasını diskten kaldırır. */
+  const dropFile = useCallback((file: string) => {
+    const pid = projectRef.current.id;
+    forgetTakes(pid, file);
+    api.deleteVoiceTake(pid, file).catch(() => {});
+  }, []);
 
   // ---- Yaşam döngüsü: açılışta artık dosyaları temizle, kapanırken kaydı/çalmayı durdur
   useEffect(() => {
     alive.current = true;
-    const keep = (projectRef.current.takes ?? []).map((t) => t.file);
-    api.pruneVoiceTakes(projectRef.current.id, keep).catch(() => {});
+    const pid = projectRef.current.id;
+    api.pruneVoiceTakes(pid, (projectRef.current.takes ?? []).map((t) => t.file)).catch(() => {});
     const p = player.current;
     return () => {
       alive.current = false;
       recording.current?.cancel();
       recording.current = null;
       p.stop();
+      // Geri alınmamış silme: dosya şimdi silinir.
+      const u = undoRef.current;
+      if (u) api.deleteVoiceTake(pid, u.take.file).catch(() => {});
+      forgetTakes(pid);
     };
   }, []);
 
-  // ---- Kayıt ve çalma sırasında ekranı tazele
+  // ---- Kayıt ve çalma sırasında ekranı tazele (~30 fps)
   const animating = rec?.phase === "recording" || !!play;
   useEffect(() => {
     if (!animating) return;
@@ -194,17 +203,27 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     return () => cancelAnimationFrame(raf);
   }, [animating]);
 
-  // Seçili parçayı görünür tut
   useEffect(() => {
     if (!sel) return;
-    listRef.current?.querySelector(`[data-take="${CSS.escape(sel)}"]`)?.scrollIntoView({ block: "nearest" });
+    flowRef.current?.querySelector(`[data-take="${CSS.escape(sel)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [sel]);
 
+  // Geri alma süresi dolunca dosya silinir.
   useEffect(() => {
     if (!undo) return;
-    const t = setTimeout(() => setUndo(null), 10_000);
+    const t = setTimeout(() => {
+      dropFile(undo.take.file);
+      setUndo(null);
+    }, 8_000);
     return () => clearTimeout(t);
-  }, [undo]);
+  }, [undo, dropFile]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [menuOpen]);
 
   // ---------------------------------------------------------------- Çalma
 
@@ -213,7 +232,6 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     setPlay(null);
   }, []);
 
-  /** Tüm parçaları `from` anından itibaren çalar. */
   const playAll = useCallback(
     (from: number) => {
       const tl = timelineRef.current;
@@ -232,7 +250,6 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     [onToast],
   );
 
-  /** Tek parçayı (isteğe bağlı olarak içinden bir andan) çalar. */
   const playTake = useCallback(
     (id: string, offset = 0) => {
       const it = timelineRef.current.find((i) => i.take.id === id);
@@ -252,37 +269,18 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     [onToast],
   );
 
-  const togglePlayAll = useCallback(() => {
-    if (play?.mode === "all") {
-      stopPlay();
-      return;
-    }
+  const togglePlayAll = () => {
+    if (play?.mode === "all") return stopPlay();
     playAll(play ? player.current.position() ?? pos : pos);
-  }, [play, pos, playAll, stopPlay]);
+  };
 
   const toggleTake = (id: string) => {
     if (play?.mode === "take" && play.id === id) stopPlay();
     else playTake(id);
   };
 
-  const jump = (dir: -1 | 1) => {
-    const tl = timelineRef.current;
-    if (!tl.length) return;
-    const cur = player.current.position() ?? pos;
-    const at = locate(tl, cur)?.index ?? tl.length - 1;
-    // Geri: parçanın başından 1 sn'den fazla geçildiyse aynı parçanın başına
-    const target = dir < 0 ? (cur - (tl[at]?.start ?? 0) > 1 ? at : Math.max(0, at - 1)) : Math.min(tl.length - 1, at + 1);
-    const t = tl[target].start;
-    setSel(tl[target].take.id);
-    if (play) playAll(t);
-    else setPos(t);
-  };
-
   // ---------------------------------------------------------------- Yazıya çevirme
 
-  const sttLang = () => settingsRef.current.voiceLanguage || settingsRef.current.sttLanguage;
-
-  /** Parçaları sırayla yazıya çevirir; tamamlanınca çözülen söz döner. */
   const transcribe = useCallback(
     (ids: string[]): Promise<void> => {
       for (const id of ids) {
@@ -295,7 +293,8 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           }
           let error = "";
           try {
-            const r = await api.transcribeVoiceTake(projectRef.current.id, take.file, sttLang());
+            const lang = settingsRef.current.voiceLanguage || settingsRef.current.sttLanguage;
+            const r = await api.transcribeVoiceTake(projectRef.current.id, take.file, lang);
             const words = r.words.map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
             const result = { lang: r.language || "?", text: r.text.trim(), words };
             fresh.current.set(take.file, result);
@@ -328,7 +327,6 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     if (alive.current) onToast(`${ids.length} parça yazıya çevrildi`);
   };
 
-  /** Eksik parçaları çevirip hepsini tek zamanlı metne aktarır. */
   const toTimed = async () => {
     if (!takes.length) return;
     const missing = takes.filter((t) => !t.stt).map((t) => t.id);
@@ -348,7 +346,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   const insertText = () => {
     const paras = takesText(takes);
-    if (!paras.length) return onToast(takes.length ? "Önce parçaları yazıya çevirin" : "Henüz kayıt yok", "error");
+    if (!paras.length) return onToast("Önce parçaları yazıya çevirin", "error");
     onInsertText(paras);
   };
 
@@ -432,7 +430,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       if (state.target.mode === "replace") {
         id = state.target.id;
         const rid = id;
+        const old = takesRef.current.find((t) => t.id === rid)?.file;
         onPatchTakes((ts) => ts.map((t) => (t.id === rid ? { ...t, file, duration, createdAt: Date.now(), stt: null, link: state.link ?? t.link } : t)));
+        if (old && old !== file) dropFile(old); // eski ses artık kullanılmıyor
       } else {
         id = crypto.randomUUID();
         const take: VoiceTake = { id, file, duration, createdAt: Date.now(), ...(state.link ? { link: state.link } : {}) };
@@ -453,9 +453,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       setRec({ ...state, phase: "ready" });
       onToast(`Kayıt kaydedilemedi: ${e}`, "error");
     }
-  }, [hasGroqKey, onPatchTakes, onToast, transcribe]);
+  }, [dropFile, hasGroqKey, onPatchTakes, onToast, transcribe]);
 
-  /** Süren kaydı atar; aynı yer için hemen yeniden kayıt alınabilir. */
+  /** Süren kaydı atar (diske hiçbir şey yazılmaz); aynı yer için hemen yeniden kayıt alınabilir. */
   const cancelRec = useCallback(() => {
     const state = recRef.current;
     if (!state) return;
@@ -480,15 +480,10 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     setFrame((n) => n + 1);
   };
 
-  // Soldaki bölüm düğmesinden gelen kayıt isteği
   useEffect(() => {
     const on = (e: Event) => {
-      const link = (e as CustomEvent<VoiceLink>).detail;
-      if (recording.current || recRef.current) {
-        onShow();
-        return;
-      }
-      newRec(link);
+      if (recording.current || recRef.current) return onShow();
+      newRec((e as CustomEvent<VoiceLink>).detail);
     };
     window.addEventListener(VOICE_RECORD_EVENT, on);
     return () => window.removeEventListener(VOICE_RECORD_EVENT, on);
@@ -501,10 +496,11 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     if (index < 0) return;
     if (play?.mode === "take" && play.id === id) stopPlay();
     const take = takes[index];
+    // Önceki silme geri alınmadıysa onun dosyası hemen gider.
+    if (undoRef.current) dropFile(undoRef.current.take.file);
     onPatchTakes((ts) => ts.filter((t) => t.id !== id));
     setUndo({ take, index });
-    const next = takes[index + 1] ?? takes[index - 1];
-    setSel(next?.id ?? null);
+    setSel((takes[index + 1] ?? takes[index - 1])?.id ?? null);
   };
 
   const restore = () => {
@@ -524,13 +520,16 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     setRenaming(null);
   };
 
-  const relink = (id: string, link: VoiceLink | null) => {
-    onPatchTakes((ts) => ts.map((t) => (t.id === id ? { ...t, link: link ?? undefined } : t)));
-  };
+  const relink = (id: string, link: VoiceLink | null) => onPatchTakes((ts) => ts.map((t) => (t.id === id ? { ...t, link: link ?? undefined } : t)));
 
-  const reorder = (from: number, to: number) => {
-    if (from === to || from + 1 === to) return;
-    onPatchTakes((ts) => moveTake(ts, from, to));
+  /** Sürükle-bırak: parçayı yeni yerine taşır ve bırakıldığı paragrafın bölümüne bağlar. */
+  const dropTake = () => {
+    if (!drag || drag.to === null) return setDrag(null);
+    const from = takes.findIndex((t) => t.id === drag.id);
+    const { id, to, link } = drag;
+    setDrag(null);
+    if (from < 0) return;
+    onPatchTakes((ts) => moveTake(ts, from, to).map((t) => (t.id === id ? { ...t, link: link ?? undefined } : t)));
   };
 
   // ---------------------------------------------------------------- Dışa aktarma
@@ -563,11 +562,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       if (String(e) !== "NO_FFMPEG") {
         onToast(String(e), "error");
       } else {
-        // ffmpeg yoksa WAV'ı burada üret
         const wavPath = /\.wav$/i.test(path) ? path : path.replace(/\.[^.\\/]+$/, "") + ".wav";
         try {
-          const wav = await mergeToWav(project.id, files, gap);
-          await api.saveBinaryFile(wavPath, wav);
+          await api.saveBinaryFile(wavPath, await mergeToWav(project.id, files, gap));
           onToast(/\.wav$/i.test(path) ? "WAV dosyası kaydedildi" : "ffmpeg bulunamadığı için WAV olarak kaydedildi (MP3/M4A için ffmpeg kurun)");
         } catch (e2) {
           onToast(`Ses dosyası kaydedilemedi: ${e2}`, "error");
@@ -584,21 +581,19 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     const onKey = (e: KeyboardEvent) => {
       const r = recRef.current;
       const k = e.key.toLowerCase();
-      const hot = e.ctrlKey && e.shiftKey && k === "m";
       const consume = () => {
         e.preventDefault();
         e.stopPropagation();
       };
-      if (hot) {
+      if (e.ctrlKey && e.shiftKey && k === "m") {
         consume();
         if (r?.phase === "recording") void finishRec();
         else if (r?.phase === "ready") retryRec();
         else if (!r) newRec();
         return;
       }
-      if (modalOpen()) return;
+      if (modalOpen() || isEditable(e.target)) return;
       if (r) {
-        if (isEditable(e.target)) return;
         if (r.phase === "recording") {
           if (e.key === "Enter") return consume(), void finishRec();
           if (e.key === "Escape") return consume(), cancelRec();
@@ -611,7 +606,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
         }
         return;
       }
-      if (!visible || isEditable(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (!visible || e.ctrlKey || e.altKey || e.metaKey) return;
       const tl = timelineRef.current;
       const idx = tl.findIndex((i) => i.take.id === sel);
       if (k === "r") {
@@ -626,10 +621,11 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       } else if ((e.key === "Delete" || e.key === "Backspace") && sel) {
         consume();
         remove(sel);
-      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      } else if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         if (!tl.length) return;
         consume();
-        const n = e.key === "ArrowDown" ? (idx < 0 ? 0 : Math.min(tl.length - 1, idx + 1)) : idx < 0 ? tl.length - 1 : Math.max(0, idx - 1);
+        const fwd = e.key === "ArrowDown" || e.key === "ArrowRight";
+        const n = fwd ? (idx < 0 ? 0 : Math.min(tl.length - 1, idx + 1)) : idx < 0 ? tl.length - 1 : Math.max(0, idx - 1);
         setSel(tl[n].take.id);
       } else if (e.key === "F2" && sel) {
         consume();
@@ -647,49 +643,204 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   const livePos = player.current.position() ?? pos;
   const cur = play ? locate(timeline, livePos) : null;
-  const playingId = play?.mode === "take" ? play.id : play ? (cur ? timeline[cur.index]?.take.id : null) : null;
+  const playingId = play?.mode === "take" ? play.id : play && cur ? timeline[cur.index]?.take.id : null;
   const doneCount = takes.filter((t) => t.stt).length;
   const busyCount = stt.busy.size;
   const r = recording.current;
-  const recTargetIndex = rec ? (rec.target.mode === "new" ? rec.target.at : takes.findIndex((t) => t.id === (rec.target as { id: string }).id)) : -1;
   const source = project.sources.find((s) => s.id === project.activeSourceId) ?? project.sources[0];
+  const selItem = timeline.find((i) => i.take.id === sel) ?? null;
+  const replacingId = rec?.target.mode === "replace" ? rec.target.id : null;
+  const insertAt = rec?.target.mode === "new" ? rec.target.at : -1;
 
-  const recCard = rec && (
-    <div className={"vr-card " + rec.phase}>
-      <div className="vr-top">
-        <span className="vr-dot" />
-        <b>
-          {rec.phase === "countdown"
-            ? `Hazır ol… ${rec.count}`
-            : rec.phase === "starting"
-              ? "Mikrofon açılıyor…"
-              : rec.phase === "saving"
-                ? "Kaydediliyor…"
-                : rec.phase === "ready"
-                  ? "Kayıt iptal edildi"
-                  : r?.paused
-                    ? "Duraklatıldı"
-                    : "Kayıt alınıyor"}
-        </b>
-        <span className="muted">
-          {rec.target.mode === "replace" ? `${takeTitle(takes[recTargetIndex] ?? ({} as VoiceTake), recTargetIndex)} yeniden kaydediliyor` : `Parça ${recTargetIndex + 1}`}
-        </span>
-        <span className="spacer" />
-        {rec.phase === "recording" && <span className="vr-time">{fmtDur(r?.elapsed() ?? 0)}</span>}
+  const progressOf = (it: TimelineItem) => (playingId === it.take.id ? Math.min(1, Math.max(0, (livePos - it.start) / Math.max(0.01, it.end - it.start))) : null);
+
+  /** Kaydı süren parçanın akıştaki yer tutucusu: süreyle büyür. */
+  const liveChip = (
+    <span key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title="Kayıt alınıyor">
+      <span className="vr-dot" />
+      <span className="vc-dur">{rec?.phase === "recording" ? fmtDur(r?.elapsed() ?? 0) : rec?.phase === "countdown" ? rec.count : "…"}</span>
+    </span>
+  );
+
+  const dragProps = (it: TimelineItem, link: VoiceLink | null) => ({
+    draggable: renaming !== it.take.id,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", it.take.id);
+      setDrag({ id: it.take.id, to: null, link: it.take.link ?? null });
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!drag) return;
+      e.preventDefault();
+      const rc = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const to = e.clientX < rc.left + rc.width / 2 ? it.index : it.index + 1;
+      if (drag.to !== to || drag.link?.segmentId !== link?.segmentId) setDrag({ ...drag, to, link });
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      dropTake();
+    },
+    onDragEnd: () => setDrag(null),
+  });
+
+  const dropClass = (i: number) => (drag?.to === i ? " drop-before" : drag?.to === i + 1 ? " drop-after" : "");
+
+  /** Dalga görünümünde parça: genişliği süresiyle orantılı. */
+  const waveChip = (it: TimelineItem, link: VoiceLink | null) => {
+    const t = it.take;
+    const w = chipWidth(t.duration);
+    return (
+      <button
+        key={t.id}
+        data-take={t.id}
+        className={"vc" + (sel === t.id ? " sel" : "") + (playingId === t.id ? " playing" : "") + (replacingId === t.id ? " replacing" : "") + dropClass(it.index)}
+        style={{ width: w }}
+        onClick={() => setSel(t.id)}
+        onDoubleClick={() => toggleTake(t.id)}
+        title={`${takeTitle(t, it.index)} · ${fmtDur(t.duration)}${t.stt?.text ? `\n${t.stt.text.slice(0, 160)}` : ""}\nÇift tık: çal · Sürükle: taşı`}
+        {...dragProps(it, link)}
+      >
+        <Wave projectId={project.id} file={t.file} bars={Math.max(8, Math.round(w / 4))} progress={progressOf(it)} />
+        <span className="vc-dur">{fmtDur(t.duration)}</span>
+        {stt.busy.has(t.id) && <span className="vc-busy" title="Yazıya çevriliyor" />}
+      </button>
+    );
+  };
+
+  /** Metin görünümünde parça: yazıya çevrildiyse cümle olarak akar, değilse küçük dalga. */
+  const textSpan = (it: TimelineItem, link: VoiceLink | null) => {
+    const t = it.take;
+    if (!t.stt?.words.length) return waveChip(it, link);
+    const rel = playingId === t.id ? livePos - it.start : -1;
+    return (
+      <span
+        key={t.id}
+        data-take={t.id}
+        className={"vs" + (sel === t.id ? " sel" : "") + (playingId === t.id ? " playing" : "") + (replacingId === t.id ? " replacing" : "") + dropClass(it.index)}
+        onClick={() => setSel(t.id)}
+        title="Çift tık: kelimeden çal · Sürükle: taşı"
+        {...dragProps(it, link)}
+      >
+        {t.stt.words.map((w, wi) => {
+          const next = t.stt!.words[wi + 1];
+          const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
+          return (
+            <span key={wi} className={on ? "on" : undefined} onDoubleClick={(e) => (e.stopPropagation(), playTake(t.id, w.s))}>
+              {w.w}{" "}
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
+
+  /**
+   * Süren kaydın akıştaki yeri: paragraf içinde bir parçanın önü, paragraf sonu (aynı bölümse) ya da en sonda yeni
+   * bir paragraf. Paragraf sınırına düşen kayıt, bölümü aynıysa önceki paragrafın sonuna eklenir.
+   */
+  let liveSlot: { para: number; before: number | null } | "tail" | null = null;
+  if (insertAt >= 0) {
+    const recSeg = rec?.link?.segmentId ?? null;
+    const inner = paragraphs.findIndex((p) => insertAt > p.items[0].index && insertAt <= p.items[p.items.length - 1].index);
+    if (inner >= 0) liveSlot = { para: inner, before: insertAt };
+    else {
+      const startPi = paragraphs.findIndex((p) => p.items[0].index === insertAt);
+      const prevPi = startPi >= 0 ? startPi - 1 : paragraphs.length - 1;
+      if (prevPi >= 0 && paragraphs[prevPi].segmentId === recSeg) liveSlot = { para: prevPi, before: null };
+      else if (startPi >= 0) liveSlot = { para: startPi, before: insertAt };
+      else liveSlot = "tail";
+    }
+  }
+
+  const renderPara = (p: (typeof paragraphs)[number], pi: number) => {
+    const link = p.items[0].take.link ?? null;
+    const lastIdx = p.items[p.items.length - 1].index;
+    const dur = p.items.reduce((n, it) => n + it.take.duration, 0);
+    const chips: React.ReactNode[] = [];
+    const slot = liveSlot !== "tail" && liveSlot?.para === pi ? liveSlot : null;
+    for (const it of p.items) {
+      if (slot?.before === it.index) chips.push(liveChip);
+      chips.push(view === "text" ? textSpan(it, link) : waveChip(it, link));
+    }
+    if (slot && slot.before === null) chips.push(liveChip);
+    return (
+      <div key={pi} className="vf-para">
+        <div className="vf-head">
+          {p.title ? (
+            <button className="vf-title ellipsis" onClick={() => p.segmentId && scrollToSegment(p.segmentId)} title="Soldaki bölüme git">
+              {p.title}
+            </button>
+          ) : (
+            <span className="vf-title none">Bölümsüz</span>
+          )}
+          <span className="vf-meta">{fmtDur(dur)}</span>
+        </div>
+        <div className={"vf-flow" + (view === "text" ? " text" : "")}>
+          {chips}
+          {!rec && (
+            <button
+              className="vc-add"
+              onClick={() => newRec(link, lastIdx + 1)}
+              title={p.title ? `“${p.title}” bölümüne yeni parça kaydet` : "Buraya yeni parça kaydet"}
+              onDragOver={(e) => {
+                if (!drag) return;
+                e.preventDefault();
+                if (drag.to !== lastIdx + 1 || drag.link?.segmentId !== link?.segmentId) setDrag({ ...drag, to: lastIdx + 1, link });
+              }}
+              onDrop={(e) => (e.preventDefault(), dropTake())}
+            >
+              ＋
+            </button>
+          )}
+        </div>
       </div>
-      {rec.phase === "recording" && <Meter level={r?.level() ?? 0} />}
-      <div className="vr-link">
-        <span className="muted">Bölüm:</span>
+    );
+  };
+
+  const tailLive = liveSlot === "tail";
+
+  // ---- Alt şerit: kayıt denetimleri ya da seçili parça
+  const selText = selItem?.take.stt?.words.length
+    ? selItem.take.stt.words.map((w, wi) => {
+        const rel = playingId === selItem.take.id ? livePos - selItem.start : -1;
+        const next = selItem.take.stt!.words[wi + 1];
+        const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
+        return (
+          <span key={wi} className={on ? "on" : undefined} onClick={() => playTake(selItem.take.id, w.s)}>
+            {w.w}{" "}
+          </span>
+        );
+      })
+    : selItem?.take.stt?.text;
+
+  const foot = rec ? (
+    <div className={"vd-foot rec " + rec.phase}>
+      <div className="vd-row">
+        <span className="vr-dot" />
+        {rec.phase === "recording" ? (
+          <b className="vr-time">{fmtDur(r?.elapsed() ?? 0)}</b>
+        ) : (
+          <b>
+            {rec.phase === "countdown"
+              ? `Hazır ol… ${rec.count}`
+              : rec.phase === "starting"
+                ? "Mikrofon açılıyor…"
+                : rec.phase === "saving"
+                  ? "Kaydediliyor…"
+                  : "Kayıt iptal edildi ve silindi"}
+          </b>
+        )}
+        {rec.phase === "recording" && (r?.paused ? <span className="muted vd-paused">Duraklatıldı</span> : <Meter level={r?.level() ?? 0} />)}
         <select
-          className="input"
+          className="input vd-link"
           value={rec.link?.segmentId ?? ""}
+          title="Bu kaydın ait olduğu soldaki bölüm"
           onChange={(e) => {
             const seg = source?.segments.find((s) => s.id === e.target.value);
-            const link = seg && source ? { sourceId: source.id, segmentId: seg.id, title: seg.title } : null;
-            setRec((x) => (x ? { ...x, link } : x));
+            setRec((x) => (x ? { ...x, link: seg && source ? { sourceId: source.id, segmentId: seg.id, title: seg.title } : null } : x));
           }}
         >
-          <option value="">(bağlantı yok)</option>
+          <option value="">Bölümsüz</option>
           {rec.link && !source?.segments.some((s) => s.id === rec.link!.segmentId) && <option value={rec.link.segmentId}>{rec.link.title}</option>}
           {source?.segments.map((s) => (
             <option key={s.id} value={s.id}>
@@ -698,216 +849,88 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           ))}
         </select>
       </div>
-      <div className="vr-actions">
+      <div className="vd-row">
         {rec.phase === "recording" && (
           <>
-            <button className="btn primary" onClick={() => void finishRec()} title="Bitir ve kaydet (Enter · Ctrl+Shift+M)">
-              ■ Bitir <kbd>Enter</kbd>
-            </button>
-            <button className="btn" onClick={togglePause} title="Duraklat / sürdür (Boşluk)">
-              {r?.paused ? "▶ Sürdür" : "❚❚ Duraklat"} <kbd>Boşluk</kbd>
-            </button>
-            <button className="btn danger" onClick={cancelRec} title="Bu kaydı at; aynı parçayı yeniden kaydedebilirsin (Esc)">
-              ✕ İptal <kbd>Esc</kbd>
-            </button>
+            <button className="btn primary" onClick={() => void finishRec()} title="Bitir ve kaydet">■ Bitir <kbd>Enter</kbd></button>
+            <button className="btn" onClick={togglePause}>{r?.paused ? "▶ Sürdür" : "❚❚ Duraklat"} <kbd>Boşluk</kbd></button>
+            <button className="btn danger" onClick={cancelRec} title="Kaydı at; aynı parçayı yeniden kaydedebilirsin">✕ İptal <kbd>Esc</kbd></button>
           </>
         )}
         {rec.phase === "ready" && (
           <>
-            <button className="btn primary" onClick={retryRec} title="Aynı parçayı yeniden kaydet (Enter · R)">
-              ● Yeniden kaydet <kbd>Enter</kbd>
-            </button>
-            <button className="btn" onClick={() => setRec(null)} title="Kapat (Esc)">
-              Vazgeç <kbd>Esc</kbd>
-            </button>
+            <button className="btn primary" onClick={retryRec}>● Yeniden kaydet <kbd>Enter</kbd></button>
+            <button className="btn" onClick={() => setRec(null)}>Vazgeç <kbd>Esc</kbd></button>
           </>
         )}
         {(rec.phase === "countdown" || rec.phase === "starting") && (
-          <button className="btn" onClick={cancelRec}>
-            Vazgeç <kbd>Esc</kbd>
-          </button>
+          <button className="btn" onClick={cancelRec}>Vazgeç <kbd>Esc</kbd></button>
         )}
       </div>
     </div>
-  );
-
-  const takeRow = (it: TimelineItem) => {
-    const t = it.take;
-    const i = it.index;
-    const isSel = sel === t.id;
-    const isPlaying = playingId === t.id;
-    const prog = isPlaying ? Math.min(1, Math.max(0, (livePos - it.start) / Math.max(0.01, it.end - it.start))) : null;
-    const rel = isPlaying ? livePos - it.start : -1;
-    const busy = stt.busy.has(t.id);
-    const err = stt.errors[t.id];
-    const beingReplaced = rec?.target.mode === "replace" && rec.target.id === t.id;
-    return (
-      <div key={t.id}>
-        {drag && drag.to === i && <div className="vt-drop" />}
-        {((rec?.target.mode === "new" && rec.target.at === i) || beingReplaced) && recCard}
-        <div
-          data-take={t.id}
-          className={"vt" + (isSel ? " sel" : "") + (isPlaying ? " playing" : "") + (beingReplaced ? " replacing" : "")}
-          onClick={() => setSel(t.id)}
-          onDoubleClick={(e) => !(e.target as HTMLElement).closest("button,input,.vt-wave,.vt-text") && toggleTake(t.id)}
-          draggable={renaming !== t.id}
-          onDragStart={(e) => {
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", t.id);
-            setDrag({ from: i, to: null });
+  ) : selItem ? (
+    <div className="vd-foot">
+      <div className="vd-row">
+        <button className={"vd-play" + (playingId === selItem.take.id && play?.mode === "take" ? " on" : "")} onClick={() => toggleTake(selItem.take.id)} title="Bu parçayı çal (Enter)">
+          {playingId === selItem.take.id && play?.mode === "take" ? "❚❚" : "▶"}
+        </button>
+        {renaming === selItem.take.id ? (
+          <input
+            className="input vd-name-input"
+            autoFocus
+            defaultValue={selItem.take.label ?? ""}
+            placeholder={`Parça ${selItem.index + 1}`}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") rename(selItem.take.id, e.currentTarget.value);
+              if (e.key === "Escape") setRenaming(null);
+            }}
+            onBlur={(e) => rename(selItem.take.id, e.currentTarget.value)}
+          />
+        ) : (
+          <button className="vd-name ellipsis" onClick={() => setRenaming(selItem.take.id)} title="Adlandır (F2)">
+            {takeTitle(selItem.take, selItem.index)}
+          </button>
+        )}
+        <span className="muted vd-dur">{fmtDur(selItem.take.duration)}</span>
+        <span className="spacer" />
+        <button className="icon-btn" onClick={() => void startRec({ mode: "replace", id: selItem.take.id }, selItem.take.link ?? null)} title="Yeniden kaydet (eskisinin yerine geçer)">⟳</button>
+        <button className="icon-btn" onClick={() => !needGroq() && void transcribe([selItem.take.id])} disabled={stt.busy.has(selItem.take.id)} title={selItem.take.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}>✦</button>
+        <button
+          className="icon-btn"
+          onClick={() => {
+            const l = currentLeftLink(project);
+            if (!l) return onToast("Solda bağlanacak bölüm yok", "error");
+            relink(selItem.take.id, l);
           }}
-          onDragOver={(e) => {
-            if (!drag) return;
-            e.preventDefault();
-            const rct = e.currentTarget.getBoundingClientRect();
-            const to = e.clientY < rct.top + rct.height / 2 ? i : i + 1;
-            if (drag.to !== to) setDrag({ ...drag, to });
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            if (drag?.to != null) reorder(drag.from, drag.to);
-            setDrag(null);
-          }}
-          onDragEnd={() => setDrag(null)}
+          title="Soldaki görünen bölüme bağla"
         >
-          <div className="vt-row">
-            <span className="vt-grip" title="Sürükleyerek sırala">⋮⋮</span>
-            <button className={"vt-play" + (isPlaying ? " on" : "")} onClick={() => toggleTake(t.id)} title={isPlaying ? "Durdur" : "Bu parçayı çal (Enter)"} aria-label="Çal">
-              {isPlaying ? "❚❚" : "▶"}
-            </button>
-            <span className="vt-num">{i + 1}</span>
-            {renaming === t.id ? (
-              <input
-                className="input vt-name-input"
-                autoFocus
-                defaultValue={t.label ?? ""}
-                placeholder={`Parça ${i + 1}`}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") rename(t.id, e.currentTarget.value);
-                  if (e.key === "Escape") setRenaming(null);
-                }}
-                onBlur={(e) => rename(t.id, e.currentTarget.value)}
-              />
-            ) : (
-              <span className="vt-name ellipsis" onDoubleClick={(e) => (e.stopPropagation(), setRenaming(t.id))} title="Çift tıklayarak adlandır (F2)">
-                {takeTitle(t, i)}
-              </span>
-            )}
-            {t.link && (
-              <button className="vt-link ellipsis" onClick={(e) => (e.stopPropagation(), scrollToSegment(t.link!.segmentId))} title={`Soldaki bölüme git: ${t.link.title}`}>
-                ↳ {t.link.title}
-              </button>
-            )}
-            <span className="spacer" />
-            <span className="vt-dur">{fmtDur(t.duration)}</span>
-            <button className="icon-btn" onClick={(e) => (e.stopPropagation(), void startRec({ mode: "replace", id: t.id }, t.link ?? null))} disabled={!!rec} title="Bu parçayı yeniden kaydet (eskisinin yerine geçer)">
-              ⟳
-            </button>
-            <div className="vt-menu-wrap">
-              <button className="icon-btn" onClick={(e) => (e.stopPropagation(), setMenu(menu === t.id ? null : t.id))} title="Diğer işlemler" aria-label="Diğer işlemler">
-                ⋯
-              </button>
-              {menu === t.id && (
-                <div className="menu right" onMouseLeave={() => setMenu(null)} onClick={() => setMenu(null)}>
-                  <button onClick={() => newRec(t.link ?? undefined, i + 1)} disabled={!!rec}>
-                    ＋ Sonrasına yeni kayıt
-                  </button>
-                  <button onClick={() => setRenaming(t.id)}>
-                    ✎ Adlandır <span className="muted">F2</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const l = currentLeftLink(project);
-                      if (!l) return onToast("Solda bağlanacak bölüm yok", "error");
-                      relink(t.id, l);
-                      onToast(`“${l.title}” bölümüne bağlandı`);
-                    }}
-                  >
-                    ↳ Soldaki görünen bölüme bağla
-                  </button>
-                  {t.link && <button onClick={() => relink(t.id, null)}>Bölüm bağlantısını kaldır</button>}
-                  <button onClick={() => !needGroq() && void transcribe([t.id])} disabled={busy}>
-                    ✦ {t.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}
-                  </button>
-                  <button onClick={() => void exportAudio(t)}>⤓ Bu parçayı dışa aktar</button>
-                  <div className="menu-sep" />
-                  <button className="danger" onClick={() => remove(t.id)}>
-                    Sil <span className="muted">Del</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-          <Wave projectId={project.id} file={t.file} progress={prog} onSeek={(f) => playTake(t.id, f * t.duration)} />
-          {busy ? (
-            <div className="vt-text muted">✦ Yazıya çevriliyor…</div>
-          ) : t.stt ? (
-            <div className="vt-text">
-              {t.stt.words.length
-                ? t.stt.words.map((w, wi) => {
-                    const next = t.stt!.words[wi + 1];
-                    const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
-                    return (
-                      <span key={wi} className={"vt-w" + (on ? " on" : "")} onClick={(e) => (e.stopPropagation(), playTake(t.id, w.s))}>
-                        {w.w}{" "}
-                      </span>
-                    );
-                  })
-                : <span className="muted">{t.stt.text || "Konuşma bulunamadı"}</span>}
-            </div>
-          ) : err ? (
-            <div className="vt-text err">
-              Yazıya çevrilemedi: {err}{" "}
-              <button className="btn small" onClick={() => !needGroq() && void transcribe([t.id])}>
-                Tekrar dene
-              </button>
-            </div>
-          ) : null}
-        </div>
+          ↳
+        </button>
+        <button className="icon-btn" onClick={() => void exportAudio(selItem.take)} title="Bu parçayı dosya olarak kaydet">⤓</button>
+        <button className="icon-btn danger" onClick={() => remove(selItem.take.id)} title="Sil (Del)">✕</button>
       </div>
-    );
-  };
+      {view === "wave" && (stt.busy.has(selItem.take.id) || selText || stt.errors[selItem.take.id]) && (
+        <div className={"vd-text" + (stt.errors[selItem.take.id] && !stt.busy.has(selItem.take.id) ? " err" : "")}>
+          {stt.busy.has(selItem.take.id) ? "Yazıya çevriliyor…" : stt.errors[selItem.take.id] ? `Yazıya çevrilemedi: ${stt.errors[selItem.take.id]}` : selText}
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <div className="voice-pane" style={{ display: visible ? undefined : "none" }}>
-      <div className="vp-tools">
-        <button className="btn primary vp-rec" onClick={() => newRec()} disabled={!!rec} title="Yeni parça kaydet (R · her yerden Ctrl+Shift+M). Soldaki seçili/görünen bölüme bağlanır.">
-          <span className="vr-dot" /> Kayıt <kbd>R</kbd>
-        </button>
-        <span className="spacer" />
-        {takes.length > 0 && (
-          <>
-            <button className="btn small" onClick={transcribeMissing} disabled={busyCount > 0 || doneCount === takes.length} title="Yazıya çevrilmemiş parçaları Groq Whisper ile çevir">
-              ✦ Yazıya çevir {doneCount < takes.length && <span className="muted">({takes.length - doneCount})</span>}
-            </button>
-            <button className="btn small" onClick={toTimed} disabled={busyCount > 0} title="Tüm parçaları tek bir kelime kelime zamanlı metne aktar (birleşik kayda göre zamanlanır)">
-              ⏱ Zamanlı metne aktar
-            </button>
-            <button className="btn small" onClick={insertText} disabled={!doneCount} title="Parçaların metnini senaryonun sonuna paragraflar halinde ekle">
-              ＋ Senaryoya ekle
-            </button>
-            <button className="btn small" onClick={copyText} disabled={!doneCount} title="Parçaların metnini panoya kopyala">
-              ⧉ Metni kopyala
-            </button>
-            <button className="btn small" onClick={() => void exportAudio()} disabled={exporting} title="Tüm parçaları tek ses dosyasında birleştir (MP3 / M4A / WAV)">
-              {exporting ? "⏳ Birleştiriliyor…" : "⤓ Tek dosya"}
-            </button>
-          </>
-        )}
-      </div>
-
-      {takes.length > 0 && (
-        <div className="vp-player">
-          <button className="icon-btn" onClick={() => jump(-1)} title="Önceki parça" aria-label="Önceki parça">⏮</button>
-          <button className={"vp-play" + (play?.mode === "all" ? " on" : "")} onClick={togglePlayAll} title="Tümünü art arda çal / duraklat (Boşluk)" aria-label="Tümünü çal">
+      {(takes.length > 0 || rec) && (
+        <div className="vp-bar">
+          <button className="vp-rec" onClick={() => newRec()} disabled={!!rec} title="Yeni parça kaydet (R · her yerden Ctrl+Shift+M)">
+            <span className="vr-dot" />
+            Kaydet
+          </button>
+          <button className={"vp-play" + (play?.mode === "all" ? " on" : "")} onClick={togglePlayAll} disabled={!takes.length} title="Tümünü art arda çal (Boşluk)">
             {play?.mode === "all" ? "❚❚" : "▶"}
           </button>
-          <button className="icon-btn" onClick={() => jump(1)} title="Sonraki parça" aria-label="Sonraki parça">⏭</button>
-          <span className="vp-time">{fmtDur(livePos)}</span>
           <div
-            className="vp-bar"
+            className="vp-track"
             onClick={(e) => {
               const rc = e.currentTarget.getBoundingClientRect();
               const t = ((e.clientX - rc.left) / rc.width) * total;
@@ -918,81 +941,76 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
             }}
             title="Tıklanan yerden çal"
           >
-            {timeline.map((it) => (
-              <div
-                key={it.take.id}
-                className={"vp-seg" + (it.take.id === sel ? " sel" : "") + (it.take.id === playingId ? " on" : "")}
-                style={{ left: `${(it.start / Math.max(total, 0.01)) * 100}%`, width: `${((it.end - it.start) / Math.max(total, 0.01)) * 100}%` }}
-                title={`${it.index + 1}. ${takeTitle(it.take, it.index)} · ${fmtDur(it.end - it.start)}`}
-              />
+            <div className="vp-fill" style={{ width: `${(Math.min(livePos, total) / Math.max(total, 0.01)) * 100}%` }} />
+            {timeline.slice(1).map((it) => (
+              <span key={it.take.id} className="vp-tick" style={{ left: `${(it.start / Math.max(total, 0.01)) * 100}%` }} />
             ))}
-            <div className="vp-head" style={{ left: `${(Math.min(livePos, total) / Math.max(total, 0.01)) * 100}%` }} />
           </div>
-          <span className="vp-time">{fmtDur(total)}</span>
+          <span className="vp-time">
+            {fmtDur(livePos)} / {fmtDur(total)}
+          </span>
+          <div className="vp-view" role="radiogroup" aria-label="Görünüm">
+            <button className={view === "wave" ? "on" : ""} onClick={() => setView("wave")} title="Ses dalgaları (genişlik = süre)">Dalga</button>
+            <button className={view === "text" ? "on" : ""} onClick={() => setView("text")} title="Yazıya çevrilmiş metin">Metin</button>
+          </div>
+          <div className="vp-more" onMouseDown={(e) => e.stopPropagation()}>
+            <button className="icon-btn" onClick={() => setMenuOpen((o) => !o)} title="Diğer işlemler" aria-label="Diğer işlemler">⋯</button>
+            {menuOpen && (
+              <div className="menu right" onClick={() => setMenuOpen(false)}>
+                <button onClick={transcribeMissing} disabled={busyCount > 0 || doneCount === takes.length}>
+                  Yazıya çevir <span className="muted">{doneCount}/{takes.length}</span>
+                </button>
+                <button onClick={toTimed} disabled={busyCount > 0 || !takes.length}>Zamanlı metne aktar</button>
+                <button onClick={insertText} disabled={!doneCount}>Metni senaryoya ekle</button>
+                <button onClick={copyText} disabled={!doneCount}>Metni kopyala</button>
+                <div className="menu-sep" />
+                <button onClick={() => void exportAudio()} disabled={exporting || !takes.length}>
+                  {exporting ? "Birleştiriliyor…" : "Tek ses dosyası olarak kaydet"} <span className="muted">MP3 · WAV</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {undo && (
-        <div className="banner busy">
-          <span>“{takeTitle(undo.take, undo.index)}” silindi</span>
-          <button className="btn small" onClick={restore}>Geri al</button>
-        </div>
-      )}
-
-      <div className="vp-list" ref={listRef} onClick={(e) => e.target === e.currentTarget && setSel(null)}>
-        {!takes.length && !rec && (
+      <div className="vp-flow" ref={flowRef} onClick={(e) => e.target === e.currentTarget && setSel(null)}>
+        {!takes.length && !rec ? (
           <div className="vp-empty">
-            <button className="vp-big-rec" onClick={() => newRec()} title="Kaydı başlat (R · Ctrl+Shift+M)">
+            <button className="vp-big-rec" onClick={() => newRec()} title="Kaydı başlat">
               <span className="vr-dot" />
             </button>
-            <p className="start-title">Senaryoyu kendi sesinle, parça parça kaydet</p>
-            <p className="muted">
-              Soldaki bölümü okuyup kendi cümlelerinle anlat. Her kayıt ayrı bir parça olur; beğenmediğini iptal edip hemen yeniden alırsın. Sonra hepsini art arda dinleyebilir,
-              tek ses dosyası olarak alabilir ya da kelime kelime zamanlı metne çevirebilirsin.
+            <p>Soldaki metni kendi cümlelerinle, parça parça seslendir.</p>
+            <p className="muted small">
+              <kbd>R</kbd> kaydet · <kbd>Enter</kbd> bitir · <kbd>Esc</kbd> iptal · <kbd>Boşluk</kbd> dinle
             </p>
-            <div className="vp-keys">
-              <span><kbd>R</kbd> / <kbd>Ctrl+Shift+M</kbd> kayıt başlat</span>
-              <span><kbd>Enter</kbd> bitir</span>
-              <span><kbd>Esc</kbd> iptal (yeniden kaydet)</span>
-              <span><kbd>Boşluk</kbd> duraklat · tümünü çal</span>
-              <span><kbd>↑</kbd><kbd>↓</kbd> parça seç · <kbd>Del</kbd> sil</span>
-            </div>
             {!hasGroqKey && (
               <p className="muted small">
-                Yazıya çevirmek için <button className="link-btn" onClick={onOpenSettings}>Groq API anahtarı</button> gerekir; kayıt ve dinleme anahtarsız çalışır.
+                Yazıya çevirmek için <button className="link-btn" onClick={onOpenSettings}>Groq anahtarı</button> gerekir.
               </p>
             )}
           </div>
-        )}
-        {timeline.map(takeRow)}
-        {drag && drag.to === takes.length && <div className="vt-drop" />}
-        {rec && (rec.target.mode === "new" ? rec.target.at >= takes.length : !takes.some((t) => t.id === (rec.target as { id: string }).id)) && recCard}
-        {takes.length > 0 && (
-          <div
-            className="vp-tail"
-            onDragOver={(e) => {
-              if (!drag) return;
-              e.preventDefault();
-              if (drag.to !== takes.length) setDrag({ ...drag, to: takes.length });
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (drag?.to != null) reorder(drag.from, drag.to);
-              setDrag(null);
-            }}
-          >
-            {!rec && (
-              <button className="btn small ghost" onClick={() => newRec()}>
-                ● Sona yeni parça kaydet
-              </button>
+        ) : (
+          <>
+            {paragraphs.map(renderPara)}
+            {tailLive && (
+              <div className="vf-para">
+                <div className="vf-head">
+                  <span className={"vf-title" + (rec?.link ? "" : " none")}>{rec?.link?.title ?? "Bölümsüz"}</span>
+                </div>
+                <div className="vf-flow">{liveChip}</div>
+              </div>
             )}
-            <span className="muted">
-              {takes.length} parça · {fmtDur(total)}
-              {busyCount > 0 ? ` · ${busyCount} parça yazıya çevriliyor` : doneCount ? ` · ${doneCount}/${takes.length} yazıya çevrildi` : ""}
-            </span>
-          </div>
+          </>
         )}
       </div>
+
+      {undo && !rec && (
+        <div className="vd-undo">
+          <span>“{takeTitle(undo.take, undo.index)}” silindi</span>
+          <button className="link-btn" onClick={restore}>Geri al</button>
+        </div>
+      )}
+      {foot}
     </div>
   );
 }
