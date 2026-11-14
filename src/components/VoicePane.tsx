@@ -192,6 +192,11 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   /** Yazıya çevrilmeyi bekleyen parçalar ve onları toplu gönderen döngü. */
   const sttQueue = useRef<string[]>([]);
   const sttRun = useRef<Promise<void> | null>(null);
+  /**
+   * Kuyruğa doğrudan verilen parçalar (yeni ya da yeniden kaydedilmiş). Proje durumu henüz yeniden çizilmediği için
+   * takesRef bunları (ya da yeni dosya adını) bilmiyor olabilir; çeviri bu kopyalarla yapılır.
+   */
+  const sttSnap = useRef(new Map<string, VoiceTake>());
   /** Süren çevirinin ilerlemesi (sn ve parça olarak); yerel Whisper yüzdesi gelen grubu içinde ilerletir. */
   const sttTotals = useRef({ doneSec: 0, totalSec: 0, doneTakes: 0, totalTakes: 0 });
   const [sttProg, setSttProg] = useState<{ pct: number; done: number; total: number } | null>(null);
@@ -409,13 +414,16 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
    * en fazla STT_BATCH_SEC'lik gruplar halinde gönderilir. Dönen söz kuyruk boşalınca çözülür.
    */
   const transcribe = useCallback(
-    (ids: string[]): Promise<void> => {
+    (items: (string | VoiceTake)[]): Promise<void> => {
+      for (const it of items) if (typeof it !== "string") sttSnap.current.set(it.id, it);
+      const ids = items.map((it) => (typeof it === "string" ? it : it.id));
       const add = ids.filter((id) => !sttQueue.current.includes(id));
       if (add.length) {
         sttQueue.current.push(...add);
         const tot = sttTotals.current;
         tot.totalTakes += add.length;
-        tot.totalSec += add.reduce((n, id) => n + Math.max(0, takesRef.current.find((t) => t.id === id)?.duration ?? 0), 0);
+        const durOf = (id: string) => sttSnap.current.get(id)?.duration ?? takesRef.current.find((t) => t.id === id)?.duration ?? 0;
+        tot.totalSec += add.reduce((n, id) => n + Math.max(0, durOf(id)), 0);
         setStt((s) => {
           const busy = new Set(s.busy);
           const errors = { ...s.errors };
@@ -429,9 +437,19 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       if (!sttRun.current && sttQueue.current.length) {
         sttRun.current = (async () => {
           while (sttQueue.current.length && alive.current) {
-            const queued = new Set(sttQueue.current.splice(0));
-            const list = takesRef.current.filter((t) => queued.has(t.id));
-            const gone = [...queued].filter((id) => !list.some((t) => t.id === id));
+            const queued = sttQueue.current.splice(0);
+            // Güncel liste sırası; listede henüz görünmeyen (yeni) ya da daha yeni kopyası olan parçalar kopyadan alınır.
+            const order = new Map(takesRef.current.map((t, i) => [t.id, i]));
+            const list = queued
+              .map((id) => {
+                const cur = takesRef.current.find((t) => t.id === id);
+                const snap = sttSnap.current.get(id);
+                sttSnap.current.delete(id);
+                return snap && (!cur || snap.createdAt >= cur.createdAt) ? snap : cur;
+              })
+              .filter((t): t is VoiceTake => !!t)
+              .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+            const gone = queued.filter((id) => !list.some((t) => t.id === id));
             sttTotals.current.totalTakes -= gone.length;
             if (gone.length) setStt((s) => ({ ...s, busy: new Set([...s.busy].filter((x) => !gone.includes(x))) }));
             for (const batch of packBatches(list, STT_BATCH_SEC, STT_GAP)) {
@@ -571,15 +589,20 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       primeTake(pid, file, out.buffer);
       const duration = out.buffer.duration;
       let id: string;
+      let saved: VoiceTake | null = null;
       if (state.target.mode === "replace") {
         id = state.target.id;
         const rid = id;
-        const old = takesRef.current.find((t) => t.id === rid)?.file;
-        onPatchTakes((ts) => ts.map((t) => (t.id === rid ? { ...t, file, duration, createdAt: Date.now(), stt: null } : t)));
+        const prev = takesRef.current.find((t) => t.id === rid);
+        const old = prev?.file;
+        const createdAt = Date.now();
+        if (prev) saved = { ...prev, file, duration, createdAt, stt: null };
+        onPatchTakes((ts) => ts.map((t) => (t.id === rid ? { ...t, file, duration, createdAt, stt: null } : t)));
         if (old && old !== file) dropFile(old);
       } else {
         id = crypto.randomUUID();
         const take: VoiceTake = { id, file, duration, createdAt: Date.now(), ...(state.link ? { link: state.link } : {}) };
+        saved = take;
         const at = state.target.at;
         onPatchTakes((ts) => {
           const next = [...ts];
@@ -591,7 +614,8 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       setRec(null);
       setSel(id);
       if (r.peak < 0.02) onToast("Kayıt neredeyse sessiz; Ayarlar › Ses kaydı'ndan mikrofonu kontrol et", "error");
-      if (settingsRef.current.voiceAutoTranscribe && sttOk) void transcribe([id]);
+      // Yeni parça proje listesine henüz yansımamış olabilir: kuyruğa parçanın kendisi verilir.
+      if (settingsRef.current.voiceAutoTranscribe && sttOk && saved) void transcribe([saved]);
     } catch (e) {
       if (!alive.current) return;
       setRec({ ...state, phase: "ready" });
