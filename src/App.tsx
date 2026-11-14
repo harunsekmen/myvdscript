@@ -385,6 +385,8 @@ export default function App() {
               onFetchUrl={pipe.fetchActive}
               onSelectSource={onSelectSource}
               onAddSource={pipe.addSourceFromUrl}
+              onFetchText={pipe.textActive}
+              onAddTextSource={pipe.addSourceFromText}
               onRemoveSource={(id) => setDialog({ kind: "removeSource", id })}
               onPickSubtitle={pipe.pickSubtitle}
               onRestore={pipe.restoreVersion}

@@ -17,12 +17,21 @@ export interface SubPick {
   list: SubtitleList;
 }
 
-/** Sırada bekleyen "altyazıyı çek ve işle" işi. */
+/** Sırada bekleyen "altyazıyı çek ve işle" (ya da `text` verilmişse "yapıştırılan metni işle") işi. */
 export interface QueuedJob {
   projectId: string;
   sourceId: string;
   url: string;
   title?: string;
+  /** Kullanıcının yapıştırdığı metin: altyazı çekilmez, doğrudan işlenir. */
+  text?: string;
+}
+
+/** Yapıştırılan metin kaynağı için başlık yoksa ilk satırdan kısa bir ad üretir. */
+export function titleFromText(text: string): string {
+  const line = text.trim().split(/\r?\n/).find((l) => l.trim()) ?? "";
+  const t = line.trim().replace(/\s+/g, " ");
+  return t.length > 60 ? t.slice(0, 57).trimEnd() + "…" : t;
 }
 
 interface Resumable {
@@ -187,9 +196,25 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
 
   /** Altyazıyı al (sıra: İngilizce > Türkçe > diğer) ve AI ile işle. Kuyruğu yok sayar; çağıran meşguliyeti kontrol eder. */
   const startFetch = useCallback(
-    async ({ projectId: pid, sourceId, url, title: manualTitle }: QueuedJob) => {
+    async ({ projectId: pid, sourceId, url, title: manualTitle, text }: QueuedJob) => {
       const token = ++opRef.current;
       setSubPick(null);
+      if (text != null) {
+        // Yapıştırılan metin: altyazı aşaması yok, metin kaynağın ham metni olur ve AI ile işlenir.
+        const title = manualTitle?.trim() || titleFromText(text);
+        try {
+          await updateProject(pid, (p) => {
+            const q = patchSource(p, sourceId, (s) => ({ ...s, transcriptRaw: text, title: s.title.trim() || title }));
+            return title && NEW_TITLES.includes(q.title) ? { ...q, title } : q;
+          });
+        } catch (e: any) {
+          setProc({ ...IDLE, sourceId, projectId: pid, error: String(e?.message ?? e) });
+          return;
+        }
+        if (opRef.current !== token) return;
+        await run(pid, sourceId, text, { label: "Yapıştırılan metin" });
+        return;
+      }
       setProc({ ...IDLE, running: true, phase: "transcript", sourceId, projectId: pid });
       try {
         // Başarısız olsa da kaynak bağlantısını hatırlasın (Yeniden dene).
@@ -212,21 +237,38 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
     [updateProject, run, toast, projectRef],
   );
 
-  /** Bağlantıdan altyazı çekip işler; başka işlem sürüyorsa sıraya alır. */
-  const fetchForSource = useCallback(
-    (sourceId: string, url: string, title?: string, projectId?: string) => {
-      const pid = projectId ?? projectRef.current?.id;
-      if (!pid) return;
-      const job: QueuedJob = { projectId: pid, sourceId, url, title };
+  /** İşi hemen başlatır; başka işlem sürüyorsa sıraya alır. */
+  const enqueue = useCallback(
+    (job: QueuedJob) => {
       if (procRef.current.running || queueRef.current.length) {
-        if (queueRef.current.some((j) => j.sourceId === sourceId)) return toast("Bu bağlantı zaten sırada");
+        if (queueRef.current.some((j) => j.sourceId === job.sourceId)) return toast("Bu kaynak zaten sırada");
         setQ([...queueRef.current, job]);
         toast(`Sıraya eklendi (${queueRef.current.length}. sırada); önceki işlem bitince başlayacak`);
         return;
       }
       void startFetch(job);
     },
-    [projectRef, startFetch, toast],
+    [startFetch, toast],
+  );
+
+  /** Bağlantıdan altyazı çekip işler; başka işlem sürüyorsa sıraya alır. */
+  const fetchForSource = useCallback(
+    (sourceId: string, url: string, title?: string, projectId?: string) => {
+      const pid = projectId ?? projectRef.current?.id;
+      if (!pid) return;
+      enqueue({ projectId: pid, sourceId, url, title });
+    },
+    [projectRef, enqueue],
+  );
+
+  /** Yapıştırılan metni kaynağa yazıp AI ile işler; başka işlem sürüyorsa sıraya alır. */
+  const textForSource = useCallback(
+    (sourceId: string, text: string, title?: string) => {
+      const pid = projectRef.current?.id;
+      if (!pid || !text.trim()) return;
+      enqueue({ projectId: pid, sourceId, url: "", title, text: text.trim() });
+    },
+    [projectRef, enqueue],
   );
 
   // Çalışan işlem bitince (başarılı, hatalı ya da iptal) sıradaki iş başlar.
@@ -276,6 +318,26 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
       fetchForSource(src.id, url, title);
     },
     [mutate, fetchForSource],
+  );
+
+  /** Etkin (boş) kaynağa yapıştırılan metni yazar ve işler. */
+  const textActive = useCallback(
+    (text: string, title?: string) => {
+      const p = projectRef.current;
+      if (p) textForSource(activeSource(p).id, text, title);
+    },
+    [projectRef, textForSource],
+  );
+
+  /** Yapıştırılan metinle yeni kaynak ekler, etkinleştirir ve işler. */
+  const addSourceFromText = useCallback(
+    (text: string, title?: string) => {
+      if (!text.trim()) return;
+      const src = makeSource("", title?.trim() || titleFromText(text));
+      mutate((p) => addSource(p, src));
+      textForSource(src.id, text, title);
+    },
+    [mutate, textForSource],
   );
 
   /** "Başka altyazı seç…": etkin kaynağın altyazı listesini getirir ve seçici açar. */
@@ -364,6 +426,8 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
     fetchForSource,
     dequeue,
     addSourceFromUrl,
+    addSourceFromText,
+    textActive,
     pickSubtitle,
     downloadSubtitle,
     restoreVersion,

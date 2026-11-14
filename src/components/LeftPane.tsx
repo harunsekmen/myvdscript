@@ -33,6 +33,9 @@ interface Props {
   onFetchUrl: (url: string, title?: string) => void;
   onSelectSource: (id: string) => void;
   onAddSource: (url: string, title?: string) => void;
+  /** Etkin (boş) kaynak için yapıştırılan metinle başlat. */
+  onFetchText: (text: string, title?: string) => void;
+  onAddTextSource: (text: string, title?: string) => void;
   onRemoveSource: (id: string) => void;
   onPickSubtitle: () => void;
   onRestore: (index: number) => void;
@@ -146,6 +149,83 @@ function LinkForm({
   );
 }
 
+/** Kendi metnini yapıştırma: başlık (isteğe bağlı) + metin alanı. Ctrl+Enter ile gönderilir. */
+function TextForm({
+  submitLabel,
+  autoFocus,
+  onSubmit,
+}: {
+  submitLabel: string;
+  autoFocus?: boolean;
+  onSubmit: (text: string, title?: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [title, setTitle] = useState("");
+  const go = () => text.trim() && onSubmit(text.trim(), title.trim() || undefined);
+  return (
+    <div className="text-start">
+      <input
+        className="input"
+        placeholder="Başlık (isteğe bağlı)"
+        spellCheck={false}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <textarea
+        className="input"
+        placeholder="Metni buraya yapıştırın…"
+        autoFocus={autoFocus}
+        rows={8}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && go()}
+      />
+      <div className="text-start-foot">
+        <span className="muted">{text.trim() ? `${text.trim().length.toLocaleString("tr-TR")} karakter · ` : ""}Ctrl+Enter</span>
+        <button className="btn primary" disabled={!text.trim()} onClick={go}>
+          {submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Kaynak girişi: YouTube bağlantısı ya da yapıştırılan metin. */
+function SourceForm({
+  initialUrl,
+  initialTitle,
+  submitLabel,
+  autoFocus,
+  onUrl,
+  onText,
+}: {
+  initialUrl?: string;
+  initialTitle?: string;
+  submitLabel: string;
+  autoFocus?: boolean;
+  onUrl: (url: string, title?: string) => void;
+  onText: (text: string, title?: string) => void;
+}) {
+  const [mode, setMode] = useState<"url" | "text">("url");
+  return (
+    <div className="source-form">
+      <div className="seg-toggle" role="tablist">
+        <button role="tab" aria-selected={mode === "url"} className={mode === "url" ? "on" : ""} onClick={() => setMode("url")}>
+          Video bağlantısı
+        </button>
+        <button role="tab" aria-selected={mode === "text"} className={mode === "text" ? "on" : ""} onClick={() => setMode("text")}>
+          Metin yapıştır
+        </button>
+      </div>
+      {mode === "url" ? (
+        <LinkForm initialUrl={initialUrl} initialTitle={initialTitle} submitLabel={submitLabel} autoFocus={autoFocus} onSubmit={onUrl} />
+      ) : (
+        <TextForm submitLabel={submitLabel} autoFocus onSubmit={onText} />
+      )}
+    </div>
+  );
+}
+
 export function LeftPane({
   project,
   settings,
@@ -162,6 +242,8 @@ export function LeftPane({
   onFetchUrl,
   onSelectSource,
   onAddSource,
+  onFetchText,
+  onAddTextSource,
   onRemoveSource,
   onPickSubtitle,
   onRestore,
@@ -588,7 +670,7 @@ export function LeftPane({
               >
                 {sourceLabel(s, i)}
               </button>
-              {(project.sources.length > 1 || s.url || s.segments.length > 0) && (
+              {(project.sources.length > 1 || s.url || s.transcriptRaw || s.segments.length > 0) && (
                 <button className="source-tab-x" title="Kaynağı sil" aria-label="Kaynağı sil" onClick={() => onRemoveSource(s.id)}>
                   ×
                 </button>
@@ -598,7 +680,7 @@ export function LeftPane({
           <button
             className="source-add"
             disabled={proc.running}
-            title={proc.running ? "İşlem bitince yeni kaynak eklenebilir" : "Başka bir YouTube videosunu kaynak olarak ekle"}
+            title={proc.running ? "İşlem bitince yeni kaynak eklenebilir" : "Başka bir YouTube videosu ya da kendi metninizi kaynak olarak ekleyin"}
             onClick={() => setAdding((a) => !a)}
           >
             ＋ Kaynak
@@ -607,12 +689,16 @@ export function LeftPane({
       )}
       {adding && (
         <div className="source-add-form">
-          <LinkForm
+          <SourceForm
             submitLabel="Ekle"
             autoFocus
-            onSubmit={(u, t) => {
+            onUrl={(u, t) => {
               setAdding(false);
               onAddSource(u, t);
+            }}
+            onText={(text, t) => {
+              setAdding(false);
+              onAddTextSource(text, t);
             }}
           />
         </div>
@@ -664,8 +750,15 @@ export function LeftPane({
             {segments.length === 0 && !busyHere && !queued && (
               <div className="empty start-empty">
                 <p className="start-title">Henüz kaynak metin yok</p>
-                <p className="muted">Bir YouTube bağlantısı yapıştırın; altyazı çekilip Türkçe'ye düzenlenecek.</p>
-                <LinkForm key={source.id} initialUrl={source.url} initialTitle={source.title} submitLabel="Başlat" onSubmit={onFetchUrl} />
+                <p className="muted">Bir YouTube bağlantısı ya da kendi metninizi yapıştırın; metin Türkçe'ye düzenlenecek.</p>
+                <SourceForm
+                  key={source.id}
+                  initialUrl={source.url}
+                  initialTitle={source.title}
+                  submitLabel="Başlat"
+                  onUrl={onFetchUrl}
+                  onText={onFetchText}
+                />
               </div>
             )}
             {segments.map((seg, i) => {
