@@ -89,6 +89,33 @@ export function sourceLabel(s: Source, index: number): string {
   return `Kaynak ${index + 1}`;
 }
 
+/** Yapıştırılan metin için başlık yoksa ilk dolu satırdan kısa bir ad üretir. */
+export function titleFromText(text: string): string {
+  const line = text.trim().split(/\r?\n/).find((l) => l.trim()) ?? "";
+  const t = line.trim().replace(/\s+/g, " ");
+  return t.length > 60 ? t.slice(0, 57).trimEnd() + "…" : t;
+}
+
+/**
+ * Yapıştırılan metni paragraflara ayırır: boş satırlar varsa paragraf sınırı onlardır (satır kaydırmaları
+ * birleşir); yoksa her dolu satır ayrı paragraftır. Sonuç, bölüm metni biçimindedir (paragraflar boş satırla).
+ */
+export function pastedParagraphs(text: string): string {
+  const norm = text.replace(/\r\n?/g, "\n").trim();
+  const blocks = /\n[ \t]*\n/.test(norm) ? norm.split(/\n[ \t]*\n+/) : norm.split("\n");
+  return blocks
+    .map((b) => b.replace(/\s*\n\s*/g, " ").replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** Yapıştırılan metni AI'a göndermeden kaynağın metni yapar (önceki işleme varsa geçmişe girer). */
+export function withPastedText(s: Source, text: string, title: string, now = Date.now()): Source {
+  const seg: Segment = { id: "s0", title: title || "Metin", text: pastedParagraphs(text) };
+  const next = applyProcessed(s, [seg], "Yapıştırılan metin", now);
+  return { ...next, transcriptRaw: text.trim(), title: s.title.trim() || title };
+}
+
 /** Kaynağın güncel sürümünü geçmişe girecek kayda çevirir; işlenmiş bölüm yoksa null. */
 export function snapshotOf(s: Source): HistoryEntry | null {
   if (!s.segments.length) return null;

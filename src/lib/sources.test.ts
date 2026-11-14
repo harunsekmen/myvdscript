@@ -10,6 +10,9 @@ import {
   patchSource,
   removeSource,
   restoreHistory,
+  pastedParagraphs,
+  titleFromText,
+  withPastedText,
 } from "./sources";
 import type { Project, Segment } from "./types";
 
@@ -172,5 +175,24 @@ describe("altyazı dili", () => {
     expect(subtitleLang({ procLabel: "Altyazı: de-orig (otomatik)" })).toBe("de");
     expect(subtitleLang({ procLabel: "Özel istem", history: [{ label: "Altyazı: en", segments: [], insights: [], createdAt: 0 }] })).toBe("en");
     expect(subtitleLang({})).toBe("");
+  });
+});
+
+describe("yapıştırılan metin", () => {
+  it("boş satır yoksa her satır ayrı paragraf olur", () => {
+    expect(pastedParagraphs("Birinci satır\r\nİkinci  satır\n\n")).toBe("Birinci satır\n\nİkinci satır");
+  });
+  it("boş satır varsa paragraf içi satır kaydırmaları birleşir", () => {
+    expect(pastedParagraphs("a\nb\n\n  \nc")).toBe("a b\n\nc");
+  });
+  it("metin AI'sız tek bölüm olarak yazılır", () => {
+    const s = withPastedText(makeSource(), "Merhaba\nDünya", "Başlık", 5);
+    expect(s.segments).toEqual([{ id: "s0", title: "Başlık", text: "Merhaba\n\nDünya" }]);
+    expect(s.transcriptRaw).toBe("Merhaba\nDünya");
+    expect(s.title).toBe("Başlık");
+    expect(s.procLabel).toBe("Yapıştırılan metin");
+  });
+  it("başlık yoksa ilk satırdan üretilir", () => {
+    expect(titleFromText("\n  İlk   satır\nikinci")).toBe("İlk satır");
   });
 });

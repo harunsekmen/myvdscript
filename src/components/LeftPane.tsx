@@ -750,7 +750,7 @@ export function LeftPane({
             {segments.length === 0 && !busyHere && !queued && (
               <div className="empty start-empty">
                 <p className="start-title">Henüz kaynak metin yok</p>
-                <p className="muted">Bir YouTube bağlantısı ya da kendi metninizi yapıştırın; metin Türkçe'ye düzenlenecek.</p>
+                <p className="muted">Bir YouTube bağlantısı yapıştırın (altyazı çekilip Türkçe'ye düzenlenir) ya da kendi metninizi olduğu gibi ekleyin.</p>
                 <SourceForm
                   key={source.id}
                   initialUrl={source.url}
