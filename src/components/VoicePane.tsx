@@ -1,7 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
+import { matchCombo, prettyCombo } from "../lib/keys";
+import { voiceKeys } from "../lib/settingsDefaults";
 import { VOICE_RECORD_EVENT, buildTimeline, fmtDur, groupTakes, locate, moveTake, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
 import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, VoicePlayer } from "../lib/voiceAudio";
 import type { Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
@@ -28,43 +30,16 @@ interface RecState {
   link: VoiceLink | null;
   count?: number;
 }
-type Play = { mode: "all" } | { mode: "take"; id: string };
-type View = "wave" | "text";
 
-/** Akıştaki parça genişliği: saniye başına piksel (çok kısa parçalar da tıklanabilir kalır). */
+/** Yazıya çevrilmemiş parçanın genişliği: saniye başına piksel. */
 const PX_PER_SEC = 7;
 const chipWidth = (sec: number) => Math.max(46, Math.round(sec * PX_PER_SEC));
-const VIEW_KEY = "voiceView";
 
 const isEditable = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const modalOpen = () => !!document.querySelector(".modal-back");
-
-/**
- * Soldaki metinde şu an "üzerinde durulan" bölüm: önce seçili metnin bölümü, yoksa görünür alanın üst üçte birindeki
- * bölüm. Kayıt bu bölüme bağlanır.
- */
-function currentLeftLink(project: Project): VoiceLink | null {
-  const source = project.sources.find((s) => s.id === project.activeSourceId) ?? project.sources[0];
-  if (!source?.segments.length) return null;
-  const toLink = (id: string | null | undefined) => {
-    const seg = id ? source.segments.find((s) => s.id === id) : null;
-    return seg ? { sourceId: source.id, segmentId: seg.id, title: seg.title } : null;
-  };
-  const sel = window.getSelection();
-  const anchor = sel && !sel.isCollapsed ? sel.anchorNode : null;
-  const fromSel = (anchor instanceof Element ? anchor : anchor?.parentElement)?.closest<HTMLElement>("[data-segid]");
-  if (fromSel) return toLink(fromSel.dataset.segid);
-  const secs = Array.from(document.querySelectorAll<HTMLElement>("[data-segid]"));
-  if (!secs.length) return null;
-  const scroller = secs[0].closest(".pane")?.getBoundingClientRect();
-  const y = scroller ? scroller.top + scroller.height / 3 : window.innerHeight / 3;
-  const hit = secs.find((el) => {
-    const r = el.getBoundingClientRect();
-    return r.top <= y && r.bottom >= y;
-  });
-  return toLink((hit ?? secs.find((el) => el.getBoundingClientRect().bottom > (scroller?.top ?? 0)))?.dataset.segid);
-}
+/** Güncel kayıt evresi (await sonrası TS daraltmasından kaçmak için işlev). */
+const phaseOf = (r: { current: RecState | null }) => r.current?.phase;
 
 function scrollToSegment(segmentId: string) {
   const el = document.querySelector<HTMLElement>(`[data-segid="${CSS.escape(segmentId)}"]`);
@@ -75,35 +50,53 @@ function scrollToSegment(segmentId: string) {
   el.classList.add("seg-flash");
 }
 
-// ---------------------------------------------------------------- Mini dalga formu
+// ---------------------------------------------------------------- Dalga formu (genişliğe göre çubuk sayısı)
 
-type WaveProps = { projectId: string; file: string; bars: number; progress: number | null };
-// Çalarken yalnız ilerleyen parçanın dalga formu yeniden çizilir.
-const Wave = memo(WaveView, (a, b) => a.projectId === b.projectId && a.file === b.file && a.bars === b.bars && a.progress === b.progress);
+type WaveProps = { projectId: string; file: string; progress: number | null };
+const Wave = memo(WaveView, (a, b) => a.projectId === b.projectId && a.file === b.file && a.progress === b.progress);
 
-function WaveView({ projectId, file, bars, progress }: WaveProps) {
-  const [peaks, setPeaks] = useState<Float32Array | null>(null);
+function WaveView({ projectId, file, progress }: WaveProps) {
+  const box = useRef<HTMLDivElement>(null);
+  const [bars, setBars] = useState(0);
+  const [buf, setBuf] = useState<AudioBuffer | null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
     let alive = true;
     setErr(false);
     loadTake(projectId, file)
-      .then((b) => alive && setPeaks(peaksOf(b, bars)))
+      .then((b) => alive && setBuf(b))
       .catch(() => alive && setErr(true));
     return () => {
       alive = false;
     };
-  }, [projectId, file, bars]);
-  if (err) return <span className="vc-err" title="Kayıt dosyası okunamadı">⚠</span>;
-  if (!peaks) return null;
-  const n = peaks.length;
+  }, [projectId, file]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => setBars(Math.max(8, Math.round(el.clientWidth / 3.5)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const peaks = useMemo(() => (buf && bars ? peaksOf(buf, bars) : null), [buf, bars]);
+  const n = peaks?.length ?? 0;
   return (
-    <svg className="vc-wave" viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" aria-hidden="true">
-      {Array.from(peaks, (p, i) => {
-        const h = Math.max(6, p * 90);
-        return <rect key={i} x={i + 0.2} y={50 - h / 2} width={0.6} height={h} className={progress !== null && i / n < progress ? "on" : ""} />;
-      })}
-    </svg>
+    <div className="vc-wave" ref={box}>
+      {err ? (
+        <span className="vc-err" title="Kayıt dosyası okunamadı">⚠</span>
+      ) : (
+        peaks && (
+          <svg viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" aria-hidden="true">
+            {Array.from(peaks, (p, i) => {
+              const h = Math.max(8, p * 92);
+              return <rect key={i} x={i + 0.2} y={50 - h / 2} width={0.6} height={h} className={progress !== null && i / n < progress ? "on" : ""} />;
+            })}
+          </svg>
+        )
+      )}
+      {progress !== null && <span className="vc-head" style={{ left: `${progress * 100}%` }} />}
+    </div>
   );
 }
 
@@ -117,6 +110,42 @@ function Meter({ level }: { level: number }) {
   );
 }
 
+// ---------------------------------------------------------------- İkonlar
+
+const I = {
+  rec: <span className="fb-dot" />,
+  play: (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+    </svg>
+  ),
+  pause: (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />
+    </svg>
+  ),
+  stop: (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+    </svg>
+  ),
+  close: (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  ),
+  redo: (
+    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+      <path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v5h5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  start: (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M6 5v14M18 6l-9 6 9 6z" stroke="currentColor" strokeWidth="2" fill="currentColor" strokeLinejoin="round" />
+    </svg>
+  ),
+};
+
 // ---------------------------------------------------------------- Panel
 
 export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPatchTakes, onToTimed, onInsertText, onOpenSettings, onToast }: Props) {
@@ -127,20 +156,24 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   projectRef.current = project;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const keys = voiceKeys(settings);
+  const kb = (a: keyof typeof keys) => prettyCombo(keys[a]);
 
   const { items: timeline, total } = useMemo(() => buildTimeline(takes, settings.voiceGapMs), [takes, settings.voiceGapMs]);
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
   const paragraphs = useMemo(() => groupTakes(timeline), [timeline]);
 
-  const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === "text" ? "text" : "wave"));
   const [sel, setSel] = useState<string | null>(null);
   const [rec, setRec] = useState<RecState | null>(null);
   const recRef = useRef(rec);
   recRef.current = rec;
   const recording = useRef<Recording | null>(null);
-  const [play, setPlay] = useState<Play | null>(null);
-  const [pos, setPos] = useState(0); // çizelgedeki konum (durunca da korunur)
+  const [playing, setPlaying] = useState(false);
+  /** Oynatma imleci (çizelgede sn): seçim ve tıklamalar burayı taşır, Boşluk buradan çalar. */
+  const [pos, setPos] = useState(0);
+  const posRef = useRef(pos);
+  posRef.current = pos;
   const player = useRef(new VoicePlayer());
   const [, setFrame] = useState(0);
   const [stt, setStt] = useState<{ busy: Set<string>; errors: Record<string, string> }>({ busy: new Set(), errors: {} });
@@ -151,13 +184,11 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   const undoRef = useRef(undo);
   undoRef.current = undo;
   const [menuOpen, setMenuOpen] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
+  const [ctx, setCtx] = useState<{ id: string; x: number; y: number } | null>(null);
   const [drag, setDrag] = useState<{ id: string; to: number | null; link: VoiceLink | null } | null>(null);
   const [exporting, setExporting] = useState(false);
   const alive = useRef(true);
   const flowRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
 
   /** Silinen parçanın dosyasını diskten kaldırır. */
   const dropFile = useCallback((file: string) => {
@@ -177,7 +208,6 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       recording.current?.cancel();
       recording.current = null;
       p.stop();
-      // Geri alınmamış silme: dosya şimdi silinir.
       const u = undoRef.current;
       if (u) api.deleteVoiceTake(pid, u.take.file).catch(() => {});
       forgetTakes(pid);
@@ -185,7 +215,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   }, []);
 
   // ---- Kayıt ve çalma sırasında ekranı tazele (~30 fps)
-  const animating = rec?.phase === "recording" || !!play;
+  const animating = rec?.phase === "recording" || playing;
   useEffect(() => {
     if (!animating) return;
     let raf = 0;
@@ -203,12 +233,18 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     return () => cancelAnimationFrame(raf);
   }, [animating]);
 
+  // Çalarken seçim, çalan parçayı izler.
+  const cur = locate(timeline, pos);
+  const curId = cur ? timeline[cur.index]?.take.id ?? null : null;
+  useEffect(() => {
+    if (playing && curId) setSel(curId);
+  }, [playing, curId]);
+
   useEffect(() => {
     if (!sel) return;
-    flowRef.current?.querySelector(`[data-take="${CSS.escape(sel)}"]`)?.scrollIntoView({ block: "nearest" });
+    flowRef.current?.querySelector(`[data-take="${CSS.escape(sel)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [sel]);
 
-  // Geri alma süresi dolunca dosya silinir.
   useEffect(() => {
     if (!undo) return;
     const t = setTimeout(() => {
@@ -219,64 +255,70 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   }, [undo, dropFile]);
 
   useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(false);
+    if (!menuOpen && !ctx) return;
+    const close = () => {
+      setMenuOpen(false);
+      setCtx(null);
+    };
     window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [menuOpen]);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menuOpen, ctx]);
 
-  // ---------------------------------------------------------------- Çalma
+  // ---------------------------------------------------------------- Çalma (tek mod: imleçten sona kadar)
 
-  const stopPlay = useCallback(() => {
-    player.current.stop();
-    setPlay(null);
-  }, []);
-
-  const playAll = useCallback(
+  const playFrom = useCallback(
     (from: number) => {
       const tl = timelineRef.current;
       if (!tl.length) return;
-      const start = from >= (tl[tl.length - 1]?.end ?? 0) - 0.05 ? 0 : from;
+      const end = tl[tl.length - 1].end;
+      const start = from >= end - 0.05 ? 0 : Math.max(0, from);
       setPos(start);
-      setPlay({ mode: "all" });
+      setPlaying(true);
       player.current
-        .play(projectRef.current.id, tl.map((i) => ({ file: i.take.file, start: i.start })), start, () => alive.current && setPlay(null))
+        .play(projectRef.current.id, tl.map((i) => ({ file: i.take.file, start: i.start })), start, () => {
+          if (!alive.current) return;
+          setPlaying(false);
+          setPos(end);
+        })
         .catch((e) => {
           if (!alive.current) return;
-          setPlay(null);
+          setPlaying(false);
           onToast(`Çalınamadı: ${e}`, "error");
         });
     },
     [onToast],
   );
 
-  const playTake = useCallback(
-    (id: string, offset = 0) => {
-      const it = timelineRef.current.find((i) => i.take.id === id);
-      if (!it) return;
-      const from = it.start + Math.min(Math.max(0, offset), Math.max(0, it.end - it.start - 0.05));
-      setSel(id);
-      setPos(from);
-      setPlay({ mode: "take", id });
-      player.current
-        .play(projectRef.current.id, [{ file: it.take.file, start: it.start }], from, () => alive.current && setPlay(null), it.end)
-        .catch((e) => {
-          if (!alive.current) return;
-          setPlay(null);
-          onToast(`Çalınamadı: ${e}`, "error");
-        });
-    },
-    [onToast],
-  );
+  const pause = useCallback(() => {
+    const p = player.current.position();
+    player.current.stop();
+    setPlaying(false);
+    if (p !== null) setPos(p);
+  }, []);
 
-  const togglePlayAll = () => {
-    if (play?.mode === "all") return stopPlay();
-    playAll(play ? player.current.position() ?? pos : pos);
+  const togglePlay = () => (playing ? pause() : playFrom(posRef.current));
+
+  /** İmleci bir ana taşır; çalıyorsa oradan devam eder. */
+  const seek = (t: number) => {
+    if (playing) playFrom(t);
+    else setPos(Math.max(0, t));
   };
 
-  const toggleTake = (id: string) => {
-    if (play?.mode === "take" && play.id === id) stopPlay();
-    else playTake(id);
+  /** Parçayı seçer ve imleci başına koyar. */
+  const selectTake = (id: string, offset = 0) => {
+    const it = timelineRef.current.find((i) => i.take.id === id);
+    if (!it) return;
+    setSel(id);
+    seek(it.start + offset);
+  };
+
+  const toStart = () => {
+    setSel(null);
+    seek(0);
   };
 
   // ---------------------------------------------------------------- Yazıya çevirme
@@ -305,11 +347,12 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           }
           if (!alive.current) return;
           setStt((s) => ({ busy: new Set([...s.busy].filter((x) => x !== id)), errors: { ...s.errors, [id]: error } }));
+          if (error) onToast(`Yazıya çevrilemedi: ${error}`, "error");
         });
       }
       return sttChain.current;
     },
-    [onPatchTakes],
+    [onPatchTakes, onToast],
   );
 
   const needGroq = () => {
@@ -365,16 +408,16 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   const startRec = useCallback(
     async (target: Target, link: VoiceLink | null) => {
-      if (recording.current) return;
+      if (recording.current || recRef.current?.phase === "starting" || recRef.current?.phase === "countdown") return;
       player.current.stop();
-      setPlay(null);
+      setPlaying(false);
       const s = settingsRef.current;
       const count = Math.max(0, Math.round(s.voiceCountdown || 0));
       setRec({ phase: count ? "countdown" : "starting", target, link, count });
       for (let n = count; n > 0; n--) {
         setRec((r) => (r ? { ...r, count: n } : r));
         await new Promise((res) => setTimeout(res, 1000));
-        if (recRef.current?.phase !== "countdown" || !alive.current) return;
+        if (phaseOf(recRef) !== "countdown" || !alive.current) return;
       }
       setRec((r) => (r ? { ...r, phase: "starting" } : r));
       try {
@@ -384,7 +427,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           echoCancellation: s.voiceEchoCancel,
           autoGainControl: s.voiceAutoGain,
         });
-        if (!alive.current || recRef.current?.phase !== "starting") {
+        if (!alive.current || phaseOf(recRef) !== "starting") {
           r.cancel();
           return;
         }
@@ -399,13 +442,19 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     [onToast],
   );
 
+  /** Yeni parça: varsayılan olarak sona eklenir ve hiçbir bölüme bağlanmaz (genel kayıt). */
   const newRec = useCallback(
-    (link?: VoiceLink | null, at?: number) => {
+    (link: VoiceLink | null = null, at?: number) => {
       onShow();
-      void startRec({ mode: "new", at: at ?? takesRef.current.length }, link === undefined ? currentLeftLink(projectRef.current) : link);
+      void startRec({ mode: "new", at: at ?? takesRef.current.length }, link);
     },
     [onShow, startRec],
   );
+
+  const rerecord = (id: string) => {
+    const t = takesRef.current.find((x) => x.id === id);
+    if (t) void startRec({ mode: "replace", id }, t.link ?? null);
+  };
 
   const finishRec = useCallback(async () => {
     const r = recording.current;
@@ -431,8 +480,8 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
         id = state.target.id;
         const rid = id;
         const old = takesRef.current.find((t) => t.id === rid)?.file;
-        onPatchTakes((ts) => ts.map((t) => (t.id === rid ? { ...t, file, duration, createdAt: Date.now(), stt: null, link: state.link ?? t.link } : t)));
-        if (old && old !== file) dropFile(old); // eski ses artık kullanılmıyor
+        onPatchTakes((ts) => ts.map((t) => (t.id === rid ? { ...t, file, duration, createdAt: Date.now(), stt: null } : t)));
+        if (old && old !== file) dropFile(old);
       } else {
         id = crypto.randomUUID();
         const take: VoiceTake = { id, file, duration, createdAt: Date.now(), ...(state.link ? { link: state.link } : {}) };
@@ -480,6 +529,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     setFrame((n) => n + 1);
   };
 
+  // Soldaki bölümün mikrofon düğmesi: o bölüme bağlı kayıt.
   useEffect(() => {
     const on = (e: Event) => {
       if (recording.current || recRef.current) return onShow();
@@ -494,9 +544,8 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   const remove = (id: string) => {
     const index = takes.findIndex((t) => t.id === id);
     if (index < 0) return;
-    if (play?.mode === "take" && play.id === id) stopPlay();
+    if (playing) pause();
     const take = takes[index];
-    // Önceki silme geri alınmadıysa onun dosyası hemen gider.
     if (undoRef.current) dropFile(undoRef.current.take.file);
     onPatchTakes((ts) => ts.filter((t) => t.id !== id));
     setUndo({ take, index });
@@ -515,14 +564,9 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     setUndo(null);
   };
 
-  const rename = (id: string, label: string) => {
-    onPatchTakes((ts) => ts.map((t) => (t.id === id ? { ...t, label: label.trim() || undefined } : t)));
-    setRenaming(null);
-  };
+  const unlink = (id?: string) =>
+    onPatchTakes((ts) => ts.map((t) => (!id || t.id === id ? (({ link: _l, ...rest }) => rest)(t) : t)));
 
-  const relink = (id: string, link: VoiceLink | null) => onPatchTakes((ts) => ts.map((t) => (t.id === id ? { ...t, link: link ?? undefined } : t)));
-
-  /** Sürükle-bırak: parçayı yeni yerine taşır ve bırakıldığı paragrafın bölümüne bağlar. */
   const dropTake = () => {
     if (!drag || drag.to === null) return setDrag(null);
     const from = takes.findIndex((t) => t.id === drag.id);
@@ -575,17 +619,18 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     }
   };
 
-  // ---------------------------------------------------------------- Kısayollar
+  // ---------------------------------------------------------------- Kısayollar (Ayarlar › Ses kaydı'ndan değiştirilebilir)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest("[data-keycapture]")) return;
       const r = recRef.current;
-      const k = e.key.toLowerCase();
+      const k = voiceKeys(settingsRef.current);
       const consume = () => {
         e.preventDefault();
         e.stopPropagation();
       };
-      if (e.ctrlKey && e.shiftKey && k === "m") {
+      if (matchCombo(e, k.toggle)) {
         consume();
         if (r?.phase === "recording") void finishRec();
         else if (r?.phase === "ready") retryRec();
@@ -595,43 +640,47 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
       if (modalOpen() || isEditable(e.target)) return;
       if (r) {
         if (r.phase === "recording") {
-          if (e.key === "Enter") return consume(), void finishRec();
-          if (e.key === "Escape") return consume(), cancelRec();
-          if (e.key === " ") return consume(), togglePause();
+          if (matchCombo(e, k.finish)) return consume(), void finishRec();
+          if (matchCombo(e, k.cancel)) return consume(), cancelRec();
+          if (matchCombo(e, k.pause)) return consume(), togglePause();
         } else if (r.phase === "ready") {
-          if (e.key === "Enter" || (k === "r" && !e.ctrlKey)) return consume(), retryRec();
-          if (e.key === "Escape") return consume(), setRec(null);
+          if (matchCombo(e, k.finish) || matchCombo(e, k.record)) return consume(), retryRec();
+          if (matchCombo(e, k.cancel)) return consume(), setRec(null);
         } else if (r.phase === "countdown" || r.phase === "starting") {
-          if (e.key === "Escape") return consume(), cancelRec();
+          if (matchCombo(e, k.cancel)) return consume(), cancelRec();
         }
         return;
       }
-      if (!visible || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (!visible) return;
       const tl = timelineRef.current;
       const idx = tl.findIndex((i) => i.take.id === sel);
-      if (k === "r") {
+      if (matchCombo(e, k.record)) {
         consume();
         newRec();
-      } else if (e.key === " ") {
+      } else if (matchCombo(e, k.play)) {
         consume();
-        togglePlayAll();
-      } else if (e.key === "Enter" && sel) {
+        togglePlay();
+      } else if (sel && matchCombo(e, k.rerecord)) {
         consume();
-        toggleTake(sel);
-      } else if ((e.key === "Delete" || e.key === "Backspace") && sel) {
+        rerecord(sel);
+      } else if (sel && matchCombo(e, k.remove)) {
         consume();
         remove(sel);
-      } else if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      } else if (e.key === "Enter" && !e.ctrlKey && !e.altKey && sel) {
+        consume();
+        const it = tl[idx];
+        if (it) playFrom(it.start);
+      } else if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key) && !e.ctrlKey && !e.altKey) {
         if (!tl.length) return;
         consume();
         const fwd = e.key === "ArrowDown" || e.key === "ArrowRight";
         const n = fwd ? (idx < 0 ? 0 : Math.min(tl.length - 1, idx + 1)) : idx < 0 ? tl.length - 1 : Math.max(0, idx - 1);
-        setSel(tl[n].take.id);
-      } else if (e.key === "F2" && sel) {
+        selectTake(tl[n].take.id);
+      } else if (e.key === "Home") {
         consume();
-        setRenaming(sel);
+        toStart();
       } else if (e.key === "Escape") {
-        if (play) stopPlay();
+        if (playing) pause();
         else setSel(null);
       }
     };
@@ -642,28 +691,33 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
   // ---------------------------------------------------------------- Görünüm
 
   const livePos = player.current.position() ?? pos;
-  const cur = play ? locate(timeline, livePos) : null;
-  const playingId = play?.mode === "take" ? play.id : play && cur ? timeline[cur.index]?.take.id : null;
+  const liveCur = locate(timeline, livePos);
+  const playingId = playing && liveCur ? timeline[liveCur.index]?.take.id ?? null : null;
   const doneCount = takes.filter((t) => t.stt).length;
   const busyCount = stt.busy.size;
   const r = recording.current;
-  const source = project.sources.find((s) => s.id === project.activeSourceId) ?? project.sources[0];
-  const selItem = timeline.find((i) => i.take.id === sel) ?? null;
   const replacingId = rec?.target.mode === "replace" ? rec.target.id : null;
   const insertAt = rec?.target.mode === "new" ? rec.target.at : -1;
+  const hasLinks = takes.some((t) => t.link);
+  // Durunca imlecin olduğu parça (çizgisi gösterilir)
+  const cursorId = !playing && liveCur && livePos > 0 ? timeline[liveCur.index]?.take.id ?? null : null;
 
-  const progressOf = (it: TimelineItem) => (playingId === it.take.id ? Math.min(1, Math.max(0, (livePos - it.start) / Math.max(0.01, it.end - it.start))) : null);
+  const progressOf = (it: TimelineItem) => {
+    if (playingId === it.take.id || cursorId === it.take.id) return Math.min(1, Math.max(0, (livePos - it.start) / Math.max(0.01, it.end - it.start)));
+    return null;
+  };
 
-  /** Kaydı süren parçanın akıştaki yer tutucusu: süreyle büyür. */
   const liveChip = (
-    <span key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title="Kayıt alınıyor">
-      <span className="vr-dot" />
-      <span className="vc-dur">{rec?.phase === "recording" ? fmtDur(r?.elapsed() ?? 0) : rec?.phase === "countdown" ? rec.count : "…"}</span>
-    </span>
+    <div key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title="Kayıt alınıyor">
+      <div className="vc-wave">
+        <span className="fb-dot small" />
+        <span className="vc-livetime">{rec?.phase === "recording" ? fmtDur(r?.elapsed() ?? 0) : rec?.phase === "countdown" ? rec.count : "…"}</span>
+      </div>
+    </div>
   );
 
   const dragProps = (it: TimelineItem, link: VoiceLink | null) => ({
-    draggable: renaming !== it.take.id,
+    draggable: true,
     onDragStart: (e: React.DragEvent) => {
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", it.take.id);
@@ -683,61 +737,81 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     onDragEnd: () => setDrag(null),
   });
 
-  const dropClass = (i: number) => (drag?.to === i ? " drop-before" : drag?.to === i + 1 ? " drop-after" : "");
-
-  /** Dalga görünümünde parça: genişliği süresiyle orantılı. */
-  const waveChip = (it: TimelineItem, link: VoiceLink | null) => {
+  /** Parça: üstte dalga, yazıya çevrildiyse altında metin. Çevrilen parça metni kadar uzar. */
+  const chip = (it: TimelineItem, link: VoiceLink | null) => {
     const t = it.take;
-    const w = chipWidth(t.duration);
+    const words = t.stt?.words ?? [];
+    const rel = playingId === t.id || cursorId === t.id ? livePos - it.start : -1;
+    const busy = stt.busy.has(t.id);
+    const cls =
+      "vc" +
+      (words.length ? " has-text" : "") +
+      (sel === t.id ? " sel" : "") +
+      (playingId === t.id ? " playing" : "") +
+      (replacingId === t.id ? " replacing" : "") +
+      (drag?.to === it.index ? " drop-before" : drag?.to === it.index + 1 ? " drop-after" : "");
     return (
-      <button
+      <div
         key={t.id}
         data-take={t.id}
-        className={"vc" + (sel === t.id ? " sel" : "") + (playingId === t.id ? " playing" : "") + (replacingId === t.id ? " replacing" : "") + dropClass(it.index)}
-        style={{ width: w }}
-        onClick={() => setSel(t.id)}
-        onDoubleClick={() => toggleTake(t.id)}
-        title={`${takeTitle(t, it.index)} · ${fmtDur(t.duration)}${t.stt?.text ? `\n${t.stt.text.slice(0, 160)}` : ""}\nÇift tık: çal · Sürükle: taşı`}
+        className={cls}
+        style={words.length ? { minWidth: chipWidth(t.duration) } : { width: chipWidth(t.duration) }}
+        onClick={(e) => {
+          e.stopPropagation();
+          selectTake(t.id);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          // Dalga üzerinde: tıklanan andan; metinde kelimeden (kelime kendi işler)
+          const wave = (e.target as HTMLElement).closest(".vc-wave");
+          if (wave) {
+            const rc = wave.getBoundingClientRect();
+            playFrom(it.start + ((e.clientX - rc.left) / rc.width) * t.duration);
+          } else playFrom(it.start);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setSel(t.id);
+          setCtx({ id: t.id, x: e.clientX, y: e.clientY });
+        }}
+        title={`${it.index + 1}. parça · ${fmtDur(t.duration)} — çift tık: çal · sağ tık: işlemler · sürükle: taşı`}
         {...dragProps(it, link)}
       >
-        <Wave projectId={project.id} file={t.file} bars={Math.max(8, Math.round(w / 4))} progress={progressOf(it)} />
+        <Wave projectId={project.id} file={t.file} progress={progressOf(it)} />
+        {words.length > 0 && (
+          <div className="vc-text">
+            {words.map((w, wi) => {
+              const next = words[wi + 1];
+              const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
+              return (
+                <span
+                  key={wi}
+                  className={on ? "on" : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSel(t.id);
+                    seek(it.start + w.s);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setSel(t.id);
+                    playFrom(it.start + w.s);
+                  }}
+                >
+                  {w.w}{" "}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {busy && <span className="vc-busy" title="Yazıya çevriliyor" />}
         <span className="vc-dur">{fmtDur(t.duration)}</span>
-        {stt.busy.has(t.id) && <span className="vc-busy" title="Yazıya çevriliyor" />}
-      </button>
+      </div>
     );
   };
 
-  /** Metin görünümünde parça: yazıya çevrildiyse cümle olarak akar, değilse küçük dalga. */
-  const textSpan = (it: TimelineItem, link: VoiceLink | null) => {
-    const t = it.take;
-    if (!t.stt?.words.length) return waveChip(it, link);
-    const rel = playingId === t.id ? livePos - it.start : -1;
-    return (
-      <span
-        key={t.id}
-        data-take={t.id}
-        className={"vs" + (sel === t.id ? " sel" : "") + (playingId === t.id ? " playing" : "") + (replacingId === t.id ? " replacing" : "") + dropClass(it.index)}
-        onClick={() => setSel(t.id)}
-        title="Çift tık: kelimeden çal · Sürükle: taşı"
-        {...dragProps(it, link)}
-      >
-        {t.stt.words.map((w, wi) => {
-          const next = t.stt!.words[wi + 1];
-          const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
-          return (
-            <span key={wi} className={on ? "on" : undefined} onDoubleClick={(e) => (e.stopPropagation(), playTake(t.id, w.s))}>
-              {w.w}{" "}
-            </span>
-          );
-        })}
-      </span>
-    );
-  };
-
-  /**
-   * Süren kaydın akıştaki yeri: paragraf içinde bir parçanın önü, paragraf sonu (aynı bölümse) ya da en sonda yeni
-   * bir paragraf. Paragraf sınırına düşen kayıt, bölümü aynıysa önceki paragrafın sonuna eklenir.
-   */
+  // Süren kaydın akıştaki yeri (paragraf içi, paragraf sonu ya da en sonda yeni paragraf)
   let liveSlot: { para: number; before: number | null } | "tail" | null = null;
   if (insertAt >= 0) {
     const recSeg = rec?.link?.segmentId ?? null;
@@ -754,181 +828,95 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   const renderPara = (p: (typeof paragraphs)[number], pi: number) => {
     const link = p.items[0].take.link ?? null;
-    const lastIdx = p.items[p.items.length - 1].index;
-    const dur = p.items.reduce((n, it) => n + it.take.duration, 0);
-    const chips: React.ReactNode[] = [];
     const slot = liveSlot !== "tail" && liveSlot?.para === pi ? liveSlot : null;
+    const nodes: React.ReactNode[] = [];
     for (const it of p.items) {
-      if (slot?.before === it.index) chips.push(liveChip);
-      chips.push(view === "text" ? textSpan(it, link) : waveChip(it, link));
+      if (slot?.before === it.index) nodes.push(liveChip);
+      nodes.push(chip(it, link));
     }
-    if (slot && slot.before === null) chips.push(liveChip);
+    if (slot && slot.before === null) nodes.push(liveChip);
     return (
       <div key={pi} className="vf-para">
-        <div className="vf-head">
-          {p.title ? (
+        {p.title && (
+          <div className="vf-head">
             <button className="vf-title ellipsis" onClick={() => p.segmentId && scrollToSegment(p.segmentId)} title="Soldaki bölüme git">
               {p.title}
             </button>
-          ) : (
-            <span className="vf-title none">Bölümsüz</span>
-          )}
-          <span className="vf-meta">{fmtDur(dur)}</span>
-        </div>
-        <div className={"vf-flow" + (view === "text" ? " text" : "")}>
-          {chips}
-          {!rec && (
-            <button
-              className="vc-add"
-              onClick={() => newRec(link, lastIdx + 1)}
-              title={p.title ? `“${p.title}” bölümüne yeni parça kaydet` : "Buraya yeni parça kaydet"}
-              onDragOver={(e) => {
-                if (!drag) return;
-                e.preventDefault();
-                if (drag.to !== lastIdx + 1 || drag.link?.segmentId !== link?.segmentId) setDrag({ ...drag, to: lastIdx + 1, link });
-              }}
-              onDrop={(e) => (e.preventDefault(), dropTake())}
-            >
-              ＋
-            </button>
-          )}
-        </div>
+          </div>
+        )}
+        <div className="vf-flow">{nodes}</div>
       </div>
     );
   };
 
-  const tailLive = liveSlot === "tail";
+  const ctxTake = ctx ? takes.find((t) => t.id === ctx.id) ?? null : null;
+  const ctxIndex = ctxTake ? takes.indexOf(ctxTake) : -1;
 
-  // ---- Alt şerit: kayıt denetimleri ya da seçili parça
-  const selText = selItem?.take.stt?.words.length
-    ? selItem.take.stt.words.map((w, wi) => {
-        const rel = playingId === selItem.take.id ? livePos - selItem.start : -1;
-        const next = selItem.take.stt!.words[wi + 1];
-        const on = rel >= w.s && rel < (next ? next.s : w.e + 0.3);
-        return (
-          <span key={wi} className={on ? "on" : undefined} onClick={() => playTake(selItem.take.id, w.s)}>
-            {w.w}{" "}
-          </span>
-        );
-      })
-    : selItem?.take.stt?.text;
-
-  const foot = rec ? (
-    <div className={"vd-foot rec " + rec.phase}>
-      <div className="vd-row">
-        <span className="vr-dot" />
-        {rec.phase === "recording" ? (
-          <b className="vr-time">{fmtDur(r?.elapsed() ?? 0)}</b>
-        ) : (
-          <b>
-            {rec.phase === "countdown"
-              ? `Hazır ol… ${rec.count}`
-              : rec.phase === "starting"
-                ? "Mikrofon açılıyor…"
-                : rec.phase === "saving"
-                  ? "Kaydediliyor…"
-                  : "Kayıt iptal edildi ve silindi"}
-          </b>
-        )}
-        {rec.phase === "recording" && (r?.paused ? <span className="muted vd-paused">Duraklatıldı</span> : <Meter level={r?.level() ?? 0} />)}
-        <select
-          className="input vd-link"
-          value={rec.link?.segmentId ?? ""}
-          title="Bu kaydın ait olduğu soldaki bölüm"
-          onChange={(e) => {
-            const seg = source?.segments.find((s) => s.id === e.target.value);
-            setRec((x) => (x ? { ...x, link: seg && source ? { sourceId: source.id, segmentId: seg.id, title: seg.title } : null } : x));
-          }}
-        >
-          <option value="">Bölümsüz</option>
-          {rec.link && !source?.segments.some((s) => s.id === rec.link!.segmentId) && <option value={rec.link.segmentId}>{rec.link.title}</option>}
-          {source?.segments.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.title}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="vd-row">
-        {rec.phase === "recording" && (
-          <>
-            <button className="btn primary" onClick={() => void finishRec()} title="Bitir ve kaydet">■ Bitir <kbd>Enter</kbd></button>
-            <button className="btn" onClick={togglePause}>{r?.paused ? "▶ Sürdür" : "❚❚ Duraklat"} <kbd>Boşluk</kbd></button>
-            <button className="btn danger" onClick={cancelRec} title="Kaydı at; aynı parçayı yeniden kaydedebilirsin">✕ İptal <kbd>Esc</kbd></button>
-          </>
-        )}
-        {rec.phase === "ready" && (
-          <>
-            <button className="btn primary" onClick={retryRec}>● Yeniden kaydet <kbd>Enter</kbd></button>
-            <button className="btn" onClick={() => setRec(null)}>Vazgeç <kbd>Esc</kbd></button>
-          </>
-        )}
-        {(rec.phase === "countdown" || rec.phase === "starting") && (
-          <button className="btn" onClick={cancelRec}>Vazgeç <kbd>Esc</kbd></button>
-        )}
-      </div>
-    </div>
-  ) : selItem ? (
-    <div className="vd-foot">
-      <div className="vd-row">
-        <button className={"vd-play" + (playingId === selItem.take.id && play?.mode === "take" ? " on" : "")} onClick={() => toggleTake(selItem.take.id)} title="Bu parçayı çal (Enter)">
-          {playingId === selItem.take.id && play?.mode === "take" ? "❚❚" : "▶"}
-        </button>
-        {renaming === selItem.take.id ? (
-          <input
-            className="input vd-name-input"
-            autoFocus
-            defaultValue={selItem.take.label ?? ""}
-            placeholder={`Parça ${selItem.index + 1}`}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") rename(selItem.take.id, e.currentTarget.value);
-              if (e.key === "Escape") setRenaming(null);
-            }}
-            onBlur={(e) => rename(selItem.take.id, e.currentTarget.value)}
-          />
-        ) : (
-          <button className="vd-name ellipsis" onClick={() => setRenaming(selItem.take.id)} title="Adlandır (F2)">
-            {takeTitle(selItem.take, selItem.index)}
+  // ---- Yüzen denetimler
+  const floating = (
+    <div className={"vfloat" + (rec ? " rec " + rec.phase : "")} onMouseDown={(e) => e.stopPropagation()}>
+      {!rec && (
+        <>
+          <button className="fb" onClick={toStart} disabled={!takes.length} title="Başa dön (Home)">
+            {I.start}
           </button>
-        )}
-        <span className="muted vd-dur">{fmtDur(selItem.take.duration)}</span>
-        <span className="spacer" />
-        <button className="icon-btn" onClick={() => void startRec({ mode: "replace", id: selItem.take.id }, selItem.take.link ?? null)} title="Yeniden kaydet (eskisinin yerine geçer)">⟳</button>
-        <button className="icon-btn" onClick={() => !needGroq() && void transcribe([selItem.take.id])} disabled={stt.busy.has(selItem.take.id)} title={selItem.take.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}>✦</button>
-        <button
-          className="icon-btn"
-          onClick={() => {
-            const l = currentLeftLink(project);
-            if (!l) return onToast("Solda bağlanacak bölüm yok", "error");
-            relink(selItem.take.id, l);
-          }}
-          title="Soldaki görünen bölüme bağla"
-        >
-          ↳
-        </button>
-        <button className="icon-btn" onClick={() => void exportAudio(selItem.take)} title="Bu parçayı dosya olarak kaydet">⤓</button>
-        <button className="icon-btn danger" onClick={() => remove(selItem.take.id)} title="Sil (Del)">✕</button>
-      </div>
-      {view === "wave" && (stt.busy.has(selItem.take.id) || selText || stt.errors[selItem.take.id]) && (
-        <div className={"vd-text" + (stt.errors[selItem.take.id] && !stt.busy.has(selItem.take.id) ? " err" : "")}>
-          {stt.busy.has(selItem.take.id) ? "Yazıya çevriliyor…" : stt.errors[selItem.take.id] ? `Yazıya çevrilemedi: ${stt.errors[selItem.take.id]}` : selText}
-        </div>
+          <button className={"fb play" + (playing ? " on" : "")} onClick={togglePlay} disabled={!takes.length} title={`${playing ? "Duraklat" : "Çal"} (${kb("play")})`}>
+            {playing ? I.pause : I.play}
+          </button>
+          <button className="fb main rec" onClick={() => newRec()} title={`Kaydet (${kb("record")} · her yerden ${kb("toggle")})`}>
+            {I.rec}
+          </button>
+          <button className="fb" onClick={() => sel && rerecord(sel)} disabled={!sel} title={`Seçili parçayı yeniden al (${kb("rerecord")})`}>
+            {I.redo}
+          </button>
+        </>
+      )}
+      {rec?.phase === "recording" && (
+        <>
+          <button className="fb" onClick={cancelRec} title={`İptal et ve sil (${kb("cancel")})`}>
+            {I.close}
+          </button>
+          <div className="fb-status">
+            <span className={"fb-dot small" + (r?.paused ? " paused" : " live")} />
+            <b>{fmtDur(r?.elapsed() ?? 0)}</b>
+            {r?.paused ? <span className="muted">Duraklatıldı</span> : <Meter level={r?.level() ?? 0} />}
+          </div>
+          <button className="fb" onClick={togglePause} title={`${r?.paused ? "Sürdür" : "Duraklat"} (${kb("pause")})`}>
+            {r?.paused ? I.play : I.pause}
+          </button>
+          <button className="fb main stop" onClick={() => void finishRec()} title={`Bitir ve kaydet (${kb("finish")})`}>
+            {I.stop}
+          </button>
+        </>
+      )}
+      {rec?.phase === "ready" && (
+        <>
+          <span className="fb-note">Kayıt iptal edildi ve silindi</span>
+          <button className="fb" onClick={() => setRec(null)} title={`Kapat (${kb("cancel")})`}>
+            {I.close}
+          </button>
+          <button className="fb main rec" onClick={retryRec} title={`Yeniden al (${kb("finish")} · ${kb("record")})`}>
+            {I.redo}
+          </button>
+        </>
+      )}
+      {(rec?.phase === "countdown" || rec?.phase === "starting" || rec?.phase === "saving") && (
+        <>
+          <span className="fb-note">{rec.phase === "countdown" ? <b className="fb-count">{rec.count}</b> : rec.phase === "starting" ? "Mikrofon açılıyor…" : "Kaydediliyor…"}</span>
+          {rec.phase !== "saving" && (
+            <button className="fb" onClick={cancelRec} title={`Vazgeç (${kb("cancel")})`}>
+              {I.close}
+            </button>
+          )}
+        </>
       )}
     </div>
-  ) : null;
+  );
 
   return (
     <div className="voice-pane" style={{ display: visible ? undefined : "none" }}>
-      {(takes.length > 0 || rec) && (
+      {takes.length > 0 && (
         <div className="vp-bar">
-          <button className="vp-rec" onClick={() => newRec()} disabled={!!rec} title="Yeni parça kaydet (R · her yerden Ctrl+Shift+M)">
-            <span className="vr-dot" />
-            Kaydet
-          </button>
-          <button className={"vp-play" + (play?.mode === "all" ? " on" : "")} onClick={togglePlayAll} disabled={!takes.length} title="Tümünü art arda çal (Boşluk)">
-            {play?.mode === "all" ? "❚❚" : "▶"}
-          </button>
           <div
             className="vp-track"
             onClick={(e) => {
@@ -936,8 +924,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
               const t = ((e.clientX - rc.left) / rc.width) * total;
               const at = locate(timeline, t);
               if (at) setSel(timeline[at.index].take.id);
-              if (play) playAll(t);
-              else setPos(t);
+              seek(t);
             }}
             title="Tıklanan yerden çal"
           >
@@ -949,39 +936,54 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           <span className="vp-time">
             {fmtDur(livePos)} / {fmtDur(total)}
           </span>
-          <div className="vp-view" role="radiogroup" aria-label="Görünüm">
-            <button className={view === "wave" ? "on" : ""} onClick={() => setView("wave")} title="Ses dalgaları (genişlik = süre)">Dalga</button>
-            <button className={view === "text" ? "on" : ""} onClick={() => setView("text")} title="Yazıya çevrilmiş metin">Metin</button>
-          </div>
           <div className="vp-more" onMouseDown={(e) => e.stopPropagation()}>
-            <button className="icon-btn" onClick={() => setMenuOpen((o) => !o)} title="Diğer işlemler" aria-label="Diğer işlemler">⋯</button>
+            <button className="icon-btn" onClick={() => setMenuOpen((o) => !o)} title="Diğer işlemler" aria-label="Diğer işlemler">
+              ⋯
+            </button>
             {menuOpen && (
               <div className="menu right" onClick={() => setMenuOpen(false)}>
                 <button onClick={transcribeMissing} disabled={busyCount > 0 || doneCount === takes.length}>
                   Yazıya çevir <span className="muted">{doneCount}/{takes.length}</span>
                 </button>
-                <button onClick={toTimed} disabled={busyCount > 0 || !takes.length}>Zamanlı metne aktar</button>
+                <button onClick={toTimed} disabled={busyCount > 0}>Zamanlı metne aktar</button>
                 <button onClick={insertText} disabled={!doneCount}>Metni senaryoya ekle</button>
                 <button onClick={copyText} disabled={!doneCount}>Metni kopyala</button>
                 <div className="menu-sep" />
-                <button onClick={() => void exportAudio()} disabled={exporting || !takes.length}>
+                <button onClick={() => void exportAudio()} disabled={exporting}>
                   {exporting ? "Birleştiriliyor…" : "Tek ses dosyası olarak kaydet"} <span className="muted">MP3 · WAV</span>
                 </button>
+                {hasLinks && (
+                  <>
+                    <div className="menu-sep" />
+                    <button onClick={() => unlink()}>Bölüm başlıklarını kaldır</button>
+                  </>
+                )}
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div className="vp-flow" ref={flowRef} onClick={(e) => e.target === e.currentTarget && setSel(null)}>
+      <div
+        className="vp-flow"
+        ref={flowRef}
+        onClick={() => setSel(null)}
+        onDoubleClick={(e) => !(e.target as HTMLElement).closest(".vc") && toStart()}
+        onDragOver={(e) => {
+          if (!drag || (e.target as HTMLElement).closest(".vc")) return;
+          e.preventDefault();
+          if (drag.to !== takes.length) setDrag({ ...drag, to: takes.length, link: takes[takes.length - 1]?.link ?? null });
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dropTake();
+        }}
+      >
         {!takes.length && !rec ? (
           <div className="vp-empty">
-            <button className="vp-big-rec" onClick={() => newRec()} title="Kaydı başlat">
-              <span className="vr-dot" />
-            </button>
             <p>Soldaki metni kendi cümlelerinle, parça parça seslendir.</p>
             <p className="muted small">
-              <kbd>R</kbd> kaydet · <kbd>Enter</kbd> bitir · <kbd>Esc</kbd> iptal · <kbd>Boşluk</kbd> dinle
+              Aşağıdaki kırmızı düğme ya da <kbd>{kb("record")}</kbd> ile başla · <kbd>{kb("finish")}</kbd> bitir · <kbd>{kb("cancel")}</kbd> iptal
             </p>
             {!hasGroqKey && (
               <p className="muted small">
@@ -992,11 +994,13 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
         ) : (
           <>
             {paragraphs.map(renderPara)}
-            {tailLive && (
+            {liveSlot === "tail" && (
               <div className="vf-para">
-                <div className="vf-head">
-                  <span className={"vf-title" + (rec?.link ? "" : " none")}>{rec?.link?.title ?? "Bölümsüz"}</span>
-                </div>
+                {rec?.link && (
+                  <div className="vf-head">
+                    <span className="vf-title">{rec.link.title}</span>
+                  </div>
+                )}
                 <div className="vf-flow">{liveChip}</div>
               </div>
             )}
@@ -1006,11 +1010,38 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
       {undo && !rec && (
         <div className="vd-undo">
-          <span>“{takeTitle(undo.take, undo.index)}” silindi</span>
-          <button className="link-btn" onClick={restore}>Geri al</button>
+          <span>{undo.index + 1}. parça silindi</span>
+          <button className="link-btn" onClick={restore}>
+            Geri al
+          </button>
         </div>
       )}
-      {foot}
+
+      {floating}
+
+      {ctx && ctxTake && (
+        <div
+          className="menu ctx-menu"
+          style={{ left: Math.min(ctx.x, window.innerWidth - 240), top: Math.min(ctx.y, window.innerHeight - 260) }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => setCtx(null)}
+        >
+          <button onClick={() => playFrom(timeline[ctxIndex]?.start ?? 0)}>Buradan çal</button>
+          <button onClick={() => rerecord(ctxTake.id)}>
+            Yeniden al <span className="muted">{kb("rerecord")}</span>
+          </button>
+          <button onClick={() => newRec(ctxTake.link ?? null, ctxIndex + 1)}>Sonrasına yeni kayıt</button>
+          <button onClick={() => !needGroq() && void transcribe([ctxTake.id])} disabled={stt.busy.has(ctxTake.id)}>
+            {ctxTake.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}
+          </button>
+          <button onClick={() => void exportAudio(ctxTake)}>Dosya olarak kaydet</button>
+          {ctxTake.link && <button onClick={() => unlink(ctxTake.id)}>Bölüm başlığından ayır</button>}
+          <div className="menu-sep" />
+          <button className="danger" onClick={() => remove(ctxTake.id)}>
+            Sil <span className="muted">{kb("remove")}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

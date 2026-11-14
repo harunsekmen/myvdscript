@@ -120,8 +120,6 @@ export class VoicePlayer {
     this.t0 = now;
     this.from = from;
     this.until = end;
-    let last: AudioBufferSourceNode | null = null;
-    let lastEnd = -1;
     for (const it of loaded) {
       const itEnd = Math.min(it.start + it.buf.duration, end);
       if (itEnd <= from) continue;
@@ -130,24 +128,24 @@ export class VoicePlayer {
       const src = c.createBufferSource();
       src.buffer = it.buf;
       src.connect(c.destination);
-      src.start(when, offset, itEnd - it.start - offset);
+      src.start(when, offset, Math.max(0.01, itEnd - it.start - offset));
       this.sources.push(src);
-      if (itEnd > lastEnd) {
-        last = src;
-        lastEnd = itEnd;
-      }
     }
-    if (!last) {
+    if (!this.sources.length) {
       onEnd();
       return;
     }
+    // Hepsi bitince biter: tek bir kaynağın erken bitmesi çalmayı kesmez.
+    let pending = this.sources.length;
     this.playing = true;
-    last.onended = () => {
-      if (my !== this.token) return;
-      this.playing = false;
-      this.sources = [];
-      onEnd();
-    };
+    for (const src of this.sources) {
+      src.onended = () => {
+        if (my !== this.token || --pending > 0) return;
+        this.playing = false;
+        this.sources = [];
+        onEnd();
+      };
+    }
   }
 
   /** Çizelgedeki anlık konum (çalmıyorsa null). */

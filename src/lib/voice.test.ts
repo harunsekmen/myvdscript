@@ -87,3 +87,17 @@ describe("paragraflar", () => {
     expect(g[0].title).toBe("X");
   });
 });
+
+describe("kısayollar", () => {
+  it("olaydan metin üretir ve eşler", async () => {
+    const { comboFromEvent, matchCombo, prettyCombo } = await import("./keys");
+    const ev = (key: string, m: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }> = {}) => ({ key, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
+    expect(comboFromEvent(ev("M", { ctrlKey: true, shiftKey: true }))).toBe("Ctrl+Shift+M");
+    expect(comboFromEvent(ev(" "))).toBe("Space");
+    expect(comboFromEvent(ev("Shift", { shiftKey: true }))).toBeNull();
+    expect(matchCombo(ev("r"), "R")).toBe(true);
+    expect(matchCombo(ev("R", { shiftKey: true }), "R")).toBe(false);
+    expect(matchCombo(ev("R", { shiftKey: true }), "Shift+R")).toBe(true);
+    expect(prettyCombo("Ctrl+Space")).toBe("Ctrl+Boşluk");
+  });
+});

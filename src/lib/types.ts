@@ -241,4 +241,9 @@ export interface Settings {
   voiceGapMs: number;
   /** Kayıt başlamadan önce geri sayım (sn, 0 = yok). */
   voiceCountdown: number;
+  /** Ses kaydı kısayolları (ör. "Ctrl+Shift+M", "Space"); eksik olanlar varsayılandan gelir. */
+  voiceKeys: Partial<Record<VoiceKeyAction, string>>;
 }
+
+/** Ses kaydı panelindeki kısayol eylemleri. */
+export type VoiceKeyAction = "toggle" | "record" | "finish" | "cancel" | "pause" | "play" | "rerecord" | "remove";

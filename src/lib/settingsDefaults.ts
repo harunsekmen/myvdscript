@@ -1,5 +1,5 @@
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT } from "./prompts";
-import type { Settings, StageDef } from "./types";
+import type { Settings, StageDef, VoiceKeyAction } from "./types";
 
 /** Varsayılan aşamalar; "idea", "processed" ve "writing" kimlikleri otomatik aşama ve tahmin kuralları tarafından kullanılır. */
 export const DEFAULT_STAGES: StageDef[] = [
@@ -55,4 +55,22 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceAutoTranscribe: true,
   voiceGapMs: 300,
   voiceCountdown: 0,
+  voiceKeys: {},
 };
+
+/** Ses kaydı kısayollarının varsayılanları. */
+export const DEFAULT_VOICE_KEYS: Record<VoiceKeyAction, string> = {
+  toggle: "Ctrl+Shift+M",
+  record: "R",
+  finish: "Enter",
+  cancel: "Escape",
+  pause: "Space",
+  play: "Space",
+  rerecord: "Shift+R",
+  remove: "Delete",
+};
+
+/** Etkin kısayollar: kullanıcının değiştirdikleri + varsayılanlar. */
+export function voiceKeys(s: Pick<Settings, "voiceKeys">): Record<VoiceKeyAction, string> {
+  return { ...DEFAULT_VOICE_KEYS, ...(s.voiceKeys ?? {}) };
+}

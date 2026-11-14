@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { levelMeter, listMics, openMic } from "../lib/voiceAudio";
 import { FONT_OPTIONS, fontCss } from "../lib/fonts";
-import { DEFAULT_SETTINGS, DEFAULT_STAGES } from "../lib/settingsDefaults";
-import type { Settings, StageDef, StatsSource } from "../lib/types";
+import { DEFAULT_SETTINGS, DEFAULT_STAGES, DEFAULT_VOICE_KEYS, voiceKeys } from "../lib/settingsDefaults";
+import { comboFromEvent, prettyCombo } from "../lib/keys";
+import type { Settings, StageDef, StatsSource, VoiceKeyAction } from "../lib/types";
 
 interface Props {
   settings: Settings;
@@ -173,6 +174,66 @@ const VOICE_LANGS: { v: string; label: string }[] = [
   { v: "pt", label: "Portekizce" },
   { v: "ja", label: "Japonca" },
 ];
+
+const VOICE_KEY_ROWS: { a: VoiceKeyAction; label: string; ctx: "rec" | "idle" | "both" }[] = [
+  { a: "toggle", label: "Her yerden kayıt başlat / bitir", ctx: "both" },
+  { a: "record", label: "Yeni kayıt (Ses kayıtları sekmesinde)", ctx: "idle" },
+  { a: "finish", label: "Kaydı bitir", ctx: "rec" },
+  { a: "cancel", label: "Kaydı iptal et (silinir)", ctx: "rec" },
+  { a: "pause", label: "Kayıtta duraklat / sürdür", ctx: "rec" },
+  { a: "play", label: "Çal / duraklat (seçili parçadan)", ctx: "idle" },
+  { a: "rerecord", label: "Seçili parçayı yeniden al", ctx: "idle" },
+  { a: "remove", label: "Seçili parçayı sil", ctx: "idle" },
+];
+
+/** Ses kaydı kısayolları: tıkla, yeni birleşime bas. */
+function VoiceKeysEditor({ s, onChange }: { s: Settings; onChange: (patch: Partial<Settings>) => void }) {
+  const keys = voiceKeys(s);
+  const [cap, setCap] = useState<VoiceKeyAction | null>(null);
+  const set = (a: VoiceKeyAction, combo: string | null) => {
+    const next = { ...(s.voiceKeys ?? {}) };
+    if (combo === null || combo === DEFAULT_VOICE_KEYS[a]) delete next[a];
+    else next[a] = combo;
+    onChange({ voiceKeys: next });
+  };
+  const dup = (a: VoiceKeyAction, ctx: string) =>
+    VOICE_KEY_ROWS.some((r) => r.a !== a && keys[r.a] && keys[r.a] === keys[a] && (r.ctx === ctx || r.ctx === "both" || ctx === "both"));
+  return (
+    <div className="s-keys">
+      {VOICE_KEY_ROWS.map(({ a, label, ctx }) => (
+        <div key={a} className="s-key">
+          <span>{label}</span>
+          <button
+            data-keycapture
+            className={"s-key-btn" + (cap === a ? " capturing" : "") + (dup(a, ctx) ? " dup" : "")}
+            title={dup(a, ctx) ? "Bu kısayol aynı anda geçerli başka bir işlemle çakışıyor" : "Değiştirmek için tıklayın"}
+            onClick={() => setCap(cap === a ? null : a)}
+            onBlur={() => setCap((c) => (c === a ? null : c))}
+            onKeyDown={(e) => {
+              if (cap !== a) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const combo = comboFromEvent(e);
+              if (!combo) return;
+              set(a, combo);
+              setCap(null);
+            }}
+          >
+            {cap === a ? "Tuşa basın…" : <kbd>{prettyCombo(keys[a])}</kbd>}
+          </button>
+          <button
+            className={"icon-btn" + (s.voiceKeys?.[a] ? " show" : "")}
+            onClick={() => set(a, null)}
+            title={`Varsayılana dön (${prettyCombo(DEFAULT_VOICE_KEYS[a])})`}
+            aria-label="Varsayılana dön"
+          >
+            ↺
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** Mikrofon seçimi + canlı seviye testi. Cihaz adları ilk izinden sonra görünür. */
 function MicPicker({ s, onChange }: { s: Settings; onChange: (patch: Partial<Settings>) => void }) {
@@ -653,14 +714,8 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
             <Segmented value={s.voiceAutoTranscribe ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ voiceAutoTranscribe: v === "on" })} />
           </Row>
         </Card>
-        <Card title="Kısayollar">
-          <div className="s-keys">
-            <span><kbd>Ctrl+Shift+M</kbd> her yerden kayıt başlat / bitir</span>
-            <span><kbd>R</kbd> yeni parça (Ses kayıtları sekmesinde)</span>
-            <span><kbd>Enter</kbd> kaydı bitir · <kbd>Esc</kbd> iptal edip yeniden kaydet</span>
-            <span><kbd>Boşluk</kbd> kayıtta duraklat, değilse tümünü çal</span>
-            <span><kbd>↑</kbd> <kbd>↓</kbd> parça seç · <kbd>Enter</kbd> seçiliyi çal · <kbd>F2</kbd> adlandır · <kbd>Del</kbd> sil</span>
-          </div>
+        <Card title="Kısayollar" hint="Değiştirmek için kısayola tıklayıp yeni tuş birleşimine basın. Ok tuşları parça seçer, Home başa döner.">
+          <VoiceKeysEditor s={s} onChange={onChange} />
         </Card>
       </>
     ),
