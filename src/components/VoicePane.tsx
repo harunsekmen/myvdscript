@@ -115,32 +115,32 @@ function Meter({ level }: { level: number }) {
 const I = {
   rec: <span className="fb-dot" />,
   play: (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
     </svg>
   ),
   pause: (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />
     </svg>
   ),
   stop: (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
     </svg>
   ),
   close: (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
     </svg>
   ),
   redo: (
-    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
       <path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v5h5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   start: (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
       <path d="M6 5v14M18 6l-9 6 9 6z" stroke="currentColor" strokeWidth="2" fill="currentColor" strokeLinejoin="round" />
     </svg>
   ),
@@ -216,6 +216,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
 
   // ---- Kayıt ve çalma sırasında ekranı tazele (~30 fps)
   const animating = rec?.phase === "recording" || playing;
+  const liveLevels = useRef<number[]>([]);
   useEffect(() => {
     if (!animating) return;
     let raf = 0;
@@ -225,6 +226,15 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
         last = now;
         const p = player.current.position();
         if (p !== null) setPos(p);
+        // Süren kaydın canlı dalgası: her 1/4 saniyenin tepe seviyesi
+        const r = recording.current;
+        if (r && !r.paused) {
+          const lv = liveLevels.current;
+          const slot = Math.floor(r.elapsed() * 4);
+          const v = r.level();
+          while (lv.length <= slot) lv.push(0);
+          lv[slot] = Math.max(lv[slot], v);
+        }
         setFrame((n) => n + 1);
       }
       raf = requestAnimationFrame(loop);
@@ -431,6 +441,7 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
           r.cancel();
           return;
         }
+        liveLevels.current = [];
         recording.current = r;
         setRec((x) => (x ? { ...x, phase: "recording" } : x));
       } catch (e) {
@@ -707,11 +718,23 @@ export function VoicePane({ project, visible, settings, hasGroqKey, onShow, onPa
     return null;
   };
 
+  const liveBars = liveLevels.current;
+  const liveMax = Math.max(0.05, ...liveBars);
   const liveChip = (
     <div key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title="Kayıt alınıyor">
       <div className="vc-wave">
-        <span className="fb-dot small" />
-        <span className="vc-livetime">{rec?.phase === "recording" ? fmtDur(r?.elapsed() ?? 0) : rec?.phase === "countdown" ? rec.count : "…"}</span>
+        {rec?.phase === "recording" || rec?.phase === "saving" ? (
+          liveBars.length > 0 && (
+            <svg viewBox={`0 0 ${liveBars.length} 100`} preserveAspectRatio="none" aria-hidden="true">
+              {liveBars.map((v, i) => {
+                const h = Math.max(8, Math.min(1, v / liveMax) * 92);
+                return <rect key={i} x={i + 0.2} y={50 - h / 2} width={0.6} height={h} />;
+              })}
+            </svg>
+          )
+        ) : (
+          <span className="vc-livenote">{rec?.phase === "countdown" ? rec.count : rec?.phase === "ready" ? "✕" : "…"}</span>
+        )}
       </div>
     </div>
   );
