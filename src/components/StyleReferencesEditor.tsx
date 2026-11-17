@@ -26,7 +26,7 @@ export function StyleReferencesEditor({ items, onChange }: { items: StyleReferen
     setBusy(false);
   };
   return <div>
-    <p className="muted">Önceki Türkçe video scriptlerinizi ekleyin. Etkin dosyalar yeni işlemlerde yazım stilinize örnek olur; mevcut metinler kendiliğinden değişmez. İçerik ve anlatım uzunluğu korunarak yalnızca ifade biçimi uyarlanır.</p>
+    <p className="muted">Önceki Türkçe video scriptlerinizi ekleyin. “Yazım stilimi kullan” açıkken etkin dosyalar yeni işlemlerde yazım stilinize örnek olur; mevcut metinler kendiliğinden değişmez. İçerik ve anlatım uzunluğu korunarak yalnızca ifade biçimi uyarlanır.</p>
     <input ref={input} type="file" accept=".txt,.md,.markdown" multiple hidden onChange={(e) => {
       const files = Array.from(e.target.files ?? []);
       e.target.value = "";

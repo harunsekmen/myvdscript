@@ -211,6 +211,7 @@ export interface StyleReference {
 }
 
 export interface Settings {
+  styleEnabled: boolean;
   styleReferences: StyleReference[];
   baseUrl: string;
   model: string;

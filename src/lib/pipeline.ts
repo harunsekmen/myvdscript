@@ -72,7 +72,7 @@ export function processTranscript(
 
   const promise = (async () => {
     const cfg = state.settings;
-    const system = buildStyleSystemPrompt(cfg.systemPrompt, cfg.styleReferences);
+    const system = buildStyleSystemPrompt(cfg.systemPrompt, cfg.styleReferences, cfg.styleEnabled);
     const chunks = chunkText(state.transcript, cfg.chunkChars);
     onProgress({ done: state.next, total: chunks.length });
     if (state.acc) onSegments(parseSegments(state.acc));

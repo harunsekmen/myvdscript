@@ -951,6 +951,9 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     prompts: (
       <>
         <Card title="Yazım stilim" hint="Kendi scriptlerinizle anlatım dilini kişiselleştirin.">
+          <Row label="Yazım stilimi kullan" desc="Varsayılan olarak kapalıdır. Açıkken yalnızca etkin dosyalar kullanılır; dosya yoksa prompta stil talimatı eklenmez.">
+            <Segmented value={s.styleEnabled ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]} onChange={(v) => onChange({ styleEnabled: v === "on" })} />
+          </Row>
           <StyleReferencesEditor items={s.styleReferences ?? []} onChange={(styleReferences) => onChange({ styleReferences })} />
         </Card>
         <Card title="Metin işleme" hint="Altyazıyı konu konu düzenleyip Türkçe anlatıma çeviren ana talimat. Zaman işareti kuralı her parçaya ayrıca eklenir.">

@@ -29,7 +29,8 @@ function excerpt(text: string, limit: number): string {
   return `${text.slice(0, size)}\n[…]\n${text.slice(middle, middle + size)}\n[…]\n${text.slice(-size)}`;
 }
 
-export function buildStyleSystemPrompt(base: string, references: StyleReference[] = []): string {
+export function buildStyleSystemPrompt(base: string, references: StyleReference[] = [], enabled = false): string {
+  if (!enabled) return base;
   const active = references.filter((r) => r.enabled && r.content.trim()).slice(0, MAX_STYLE_FILES);
   if (!active.length) return base;
   const budget = Math.floor(STYLE_CONTEXT_CHARS / active.length);

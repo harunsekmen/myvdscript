@@ -22,6 +22,7 @@ export function migrateStages(stages: StageDef[]): StageDef[] {
 
 /** Uygulamanın varsayılan ayarları (ilk açılış ve "varsayılana dön" düğmeleri). */
 export const DEFAULT_SETTINGS: Settings = {
+  styleEnabled: false,
   styleReferences: [],
   baseUrl: "https://api.openai.com/v1",
   model: "",

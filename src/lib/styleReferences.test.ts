@@ -17,11 +17,17 @@ describe("stil dosyaları", () => {
   });
   it("örnek olmadığında mevcut istemi korur, kapalı örneği göndermez", () => {
     expect(buildStyleSystemPrompt("temel")).toBe("temel");
-    expect(buildStyleSystemPrompt("temel", [{ ...ref, enabled: false }])).toBe("temel");
+    expect(buildStyleSystemPrompt("temel", [{ ...ref, enabled: false }], true)).toBe("temel");
+  });
+  it("varsayılan olarak ve kapalıyken dosya olsa da istemi değiştirmez", () => {
+    expect(DEFAULT_SETTINGS.styleEnabled).toBe(false);
+    expect(buildStyleSystemPrompt("temel", [ref])).toBe("temel");
+    expect(buildStyleSystemPrompt("temel", [ref], false)).toBe("temel");
+    expect(buildStyleSystemPrompt("temel", [], true)).toBe("temel");
   });
   it("uzun dosyalar arasında bütçeyi paylaşır ve baş, orta, son kısımları alır", () => {
     const text = "BAŞ" + "a".repeat(30000) + "ORTA" + "b".repeat(30000) + "SON";
-    const prompt = buildStyleSystemPrompt("temel", [ref, { ...ref, id: "2", content: text }]);
+    const prompt = buildStyleSystemPrompt("temel", [ref, { ...ref, id: "2", content: text }], true);
     expect(prompt).toContain("BAŞ");
     expect(prompt).toContain("ORTA");
     expect(prompt).toContain("SON");
@@ -30,7 +36,7 @@ describe("stil dosyaları", () => {
   });
   it("her parçada aynı stil istemini kullanır ve kaynak metni korur", async () => {
     const requests: { system: string; user: string }[] = [];
-    await processTranscript("[00:01] İlk cümle.\n[00:02] İkinci cümle.", { ...DEFAULT_SETTINGS, chunkChars: 20, styleReferences: [ref] }, () => {}, () => {}, {
+    await processTranscript("[00:01] İlk cümle.\n[00:02] İkinci cümle.", { ...DEFAULT_SETTINGS, chunkChars: 20, styleEnabled: true, styleReferences: [ref] }, () => {}, () => {}, {
       deps: { chat: (args) => {
         requests.push(args);
         return { done: Promise.resolve("### [KONU: Test]\nMetin."), cancel: () => {} };
