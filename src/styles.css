@@ -1003,3 +1003,10 @@ button.vf-title:hover { color: var(--text); }
 .stt-bar > div { height: 100%; background: var(--accent); transition: width .3s; }
 .vp-stt { display: flex; align-items: center; gap: 12px; padding: 6px 14px; font-size: 12px; color: #b9c6ff; background: #1f2740; border-bottom: 1px solid #2f3a5c; }
 .vp-stt .stt-bar { max-width: none; }
+
+.style-drop { width: 100%; margin-top: 8px; padding: 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 5px; border: 1px dashed #454c65; border-radius: 10px; background: transparent; color: var(--text); font: inherit; cursor: pointer; transition: border-color .15s, background .15s; }
+.style-drop small { color: var(--muted); font-size: 12px; pointer-events: none; }
+.style-drop span { pointer-events: none; }
+.style-drop:hover, .style-drop.dragging { border-color: #7694ff; background: #4c6ef51a; }
+.style-drop:focus-visible { outline: 2px solid #7694ff; outline-offset: 3px; }
+.style-drop:disabled { opacity: .5; cursor: default; }
