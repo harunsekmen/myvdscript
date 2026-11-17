@@ -203,7 +203,15 @@ export type SttEngine = "groq" | "local";
 export type HomeSort = "updated" | "views" | "stage" | "created";
 export type StatsSource = "ytdlp" | "api" | "auto";
 
+export interface StyleReference {
+  id: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+}
+
 export interface Settings {
+  styleReferences: StyleReference[];
   baseUrl: string;
   model: string;
   insightModel: string;

@@ -1,3 +1,4 @@
+import { StyleReferencesEditor } from "./StyleReferencesEditor";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api, onWhisperDownload, type WhisperProgress } from "../lib/api";
 import { modelInstalled, refreshWhisper, subscribeWhisper, whisperStatus, WHISPER_MODELS } from "../lib/stt";
@@ -53,7 +54,7 @@ const SECTIONS: { id: Section; label: string; hint: string; keywords: string }[]
   { id: "speech", label: "Ses ve YouTube", hint: "Whisper (Groq / yerel), çerezler", keywords: "groq whisper yerel local model indir ses konuşma dil stt youtube çerez cookie firefox 429" },
   { id: "voice", label: "Ses kaydı", hint: "Mikrofon, dil, parçalar", keywords: "ses kayıt mikrofon kayıt parça dil gürültü yankı kazanç geri sayım boşluk seslendirme voice" },
   { id: "home", label: "Ana sayfa", hint: "Aşamalar, video verisi", keywords: "ana sayfa aşama kontrol listesi izlenme yt-dlp youtube api anahtar pano kart otomatik" },
-  { id: "prompts", label: "İstemler", hint: "AI talimatları", keywords: "istem prompt talimat sistem açıklama insight" },
+  { id: "prompts", label: "İstemler", hint: "Yazım stili ve AI talimatları", keywords: "istem prompt talimat sistem açıklama insight stil script dosya örnek txt md" },
   { id: "look", label: "Görünüm", hint: "Yazı tipi ve düzen", keywords: "yazı tipi font boyut satır aralığı genişlik oran renk segment görünüm" },
 ];
 
@@ -949,6 +950,9 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     ),
     prompts: (
       <>
+        <Card title="Yazım stilim" hint="Kendi scriptlerinizle anlatım dilini kişiselleştirin.">
+          <StyleReferencesEditor items={s.styleReferences ?? []} onChange={(styleReferences) => onChange({ styleReferences })} />
+        </Card>
         <Card title="Metin işleme" hint="Altyazıyı konu konu düzenleyip Türkçe anlatıma çeviren ana talimat. Zaman işareti kuralı her parçaya ayrıca eklenir.">
           {promptBox("systemPrompt", 14)}
         </Card>
