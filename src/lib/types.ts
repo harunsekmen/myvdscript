@@ -113,6 +113,7 @@ export interface VoiceTake {
   duration: number; // sn
   createdAt: number;
   label?: string; // kullanıcının verdiği ad
+  note?: boolean; // ses dışa aktarımında atlanır, metin aktarımında not olur
   /** Kaydın ilgili olduğu soldaki kaynak bölüm (kayıt başlarken seçili/görünen bölüm). */
   link?: { sourceId: string; segmentId: string; title: string };
   /** Whisper ile çıkarılan metin (yeniden kayıtta silinir). */

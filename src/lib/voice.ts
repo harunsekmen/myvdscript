@@ -50,7 +50,16 @@ export function fmtDur(sec: number): string {
 
 /** Yazıya çevrilmiş parçaların düz metni (her parça bir paragraf). */
 export function takesText(takes: VoiceTake[]): string[] {
-  return takes.map((t) => t.stt?.text.trim() ?? "").filter(Boolean);
+  return takeParagraphs(takes).map(({ text, note }) => (note ? `[Not: ${text}]` : text));
+}
+
+export function takeParagraphs(takes: VoiceTake[]): { text: string; note: boolean }[] {
+  return takes
+    .map((take, index) => ({
+      note: !!take.note,
+      text: take.stt?.text.trim() || (take.note ? takeTitle(take, index) : ""),
+    }))
+    .filter(({ text }) => !!text);
 }
 
 /**
@@ -58,20 +67,26 @@ export function takesText(takes: VoiceTake[]): string[] {
  * sonu olur. Bağlı kaynak bölüm değiştiğinde (ve ilk parçada) bölüm başlığı not olarak eklenir.
  */
 export function takesToTimed(takes: VoiceTake[], gapMs: number, source: string): TimedDoc {
-  const { items } = buildTimeline(takes, gapMs);
+  const { items } = buildTimeline(takes.filter((take) => !take.note), gapMs);
   const out: TimedItem[] = [];
   let lang = "";
   let lastSeg: string | null = null;
-  for (const it of items) {
-    const stt = it.take.stt;
-    if (!stt?.words.length) continue;
-    lang ||= stt.lang;
+  let audioIndex = 0;
+  for (const [index, take] of takes.entries()) {
+    const it = take.note ? undefined : items[audioIndex++];
+    const stt = take.stt;
+    if (!take.note && !stt?.words.length) continue;
+    lang ||= stt?.lang ?? "";
     if (out.length) out.push({ k: "br" });
-    const seg = it.take.link?.segmentId ?? null;
-    if (seg && seg !== lastSeg) out.push({ k: "note", id: newId(), text: `Bölüm: ${it.take.link!.title}` });
+    const seg = take.link?.segmentId ?? null;
+    if (seg && seg !== lastSeg) out.push({ k: "note", id: newId(), text: `Bölüm: ${take.link!.title}` });
     lastSeg = seg ?? lastSeg;
-    const words = stt.words.map((w) => ({ word: w.w, start: it.start + w.s, end: it.start + w.e }));
-    out.push(...buildTimed(words, source, stt.lang).items);
+    if (!it) {
+      out.push({ k: "note", id: newId(), text: stt?.text.trim() || takeTitle(take, index) });
+    } else if (stt) {
+      const words = stt.words.map((w) => ({ word: w.w, start: it.start + w.s, end: it.start + w.e }));
+      out.push(...buildTimed(words, source, stt.lang).items);
+    }
   }
   return { source, lang: lang || "?", items: out };
 }

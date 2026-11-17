@@ -310,7 +310,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const cue = playing ? liveCue : "";
   const origTag = (origLang.split("-")[0] || "EN").toUpperCase().slice(0, 3);
   const origin = encodeURIComponent(window.location.origin);
-  const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&playsinline=1&origin=${origin}`;
+  const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&cc_load_policy=3&playsinline=1&origin=${origin}`;
   const desc = meta?.description.trim() ?? "";
   const chapters = meta?.chapters ?? [];
   const curChapter = chapters.reduce((k, c, i) => (c.start <= time + 0.5 ? i : k), -1);

@@ -80,12 +80,16 @@ function onMessage(e: MessageEvent) {
   if (!st.ready) {
     set({ ready: true });
     applyVolume();
+    command("addEventListener", ["onApiChange"]);
+    disableCaptions();
     if (pending) {
       load(pending.from, pending.to);
       pending = null;
     }
   }
-  if (d.event === "onError") {
+  if (d.event === "onApiChange") {
+    disableCaptions();
+  } else if (d.event === "onError") {
     set({ error: `Video oynatılamadı (hata ${d.info})` });
   } else if (d.event === "onStateChange" && typeof d.info === "number") {
     set({ playing: d.info === 1 || d.info === 3 });
@@ -100,6 +104,10 @@ function onMessage(e: MessageEvent) {
       command("pauseVideo");
     }
   }
+}
+
+function disableCaptions() {
+  command("setOption", ["captions", "track", {}]);
 }
 
 /** Panelin iframe'ini oynatıcı olarak kaydeder; dönen işlev kaydı kaldırır. */

@@ -350,11 +350,14 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
   };
 
   /** Ses kayıtlarının metnini senaryonun sonuna paragraflar halinde ekler. */
-  const insertParagraphs = (paras: string[]) => {
+  const insertParagraphs = (paras: { text: string; note: boolean }[]) => {
     const ed = editorRef.current;
     if (!ed) return;
     const end = ed.state.doc.content.size;
-    const nodes = paras.map((t) => ({ type: "paragraph", content: [{ type: "text", text: t }] }));
+    const nodes = paras.map(({ text, note }) => ({
+      type: "paragraph",
+      content: [{ type: "text", text, ...(note ? { marks: [{ type: NOTE_MARK }] } : {}) }],
+    }));
     ed.chain().insertContentAt(end, nodes).run();
     onTab("write");
     setTimeout(() => ed.commands.focus("end"), 0);

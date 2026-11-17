@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alignPunctuation, buildTimeline, encodeWav, fmtDur, locate, moveTake, packBatches, splitWords, takesText, takesToTimed } from "./voice";
+import { alignPunctuation, buildTimeline, encodeWav, fmtDur, locate, moveTake, packBatches, splitWords, takeParagraphs, takesText, takesToTimed } from "./voice";
 import type { VoiceTake } from "./types";
 
 const take = (id: string, duration: number, extra: Partial<VoiceTake> = {}): VoiceTake => ({ id, file: `${id}.webm`, duration, createdAt: 0, ...extra });
@@ -58,6 +58,22 @@ describe("voice → zamanlı metin", () => {
 
   it("düz metin yalnız çevrilmiş parçaları içerir", () => {
     expect(takesText(takes)).toEqual(["Merhaba dünya", "Selam"]);
+  });
+
+  it("ses notunu yerinde tutar ve sonraki kelimeyi dışa aktarılan sese göre zamanlar", () => {
+    const note = take("n", 3, { note: true, stt: { lang: "tr", text: "Müzik girsin", words: [] } });
+    const list = [takes[0], note, takes[2]];
+    const doc = takesToTimed(list, 1000, "Ses kayıtları");
+    expect(doc.items.map((i) => i.k)).toEqual(["note", "w", "w", "br", "note", "br", "w"]);
+    expect(doc.items[4]).toMatchObject({ k: "note", text: "Müzik girsin" });
+    expect(doc.items[6]).toMatchObject({ k: "w", w: "Selam", s: 3.5, e: 4 });
+    expect(takeParagraphs(list)[1]).toEqual({ note: true, text: "Müzik girsin" });
+  });
+
+  it("yalnızca not içeren kayıtları, çeviri yoksa parça adıyla aktarır", () => {
+    const list = [take("n", 3, { note: true, label: "Müzik" })];
+    expect(takesToTimed(list, 1000, "Ses kayıtları").items).toMatchObject([{ k: "note", text: "Müzik" }]);
+    expect(takeParagraphs(list)).toEqual([{ note: true, text: "Müzik" }]);
   });
 });
 

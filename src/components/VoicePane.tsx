@@ -4,7 +4,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, onSttProgress } from "../lib/api";
 import { matchCombo, prettyCombo } from "../lib/keys";
 import { voiceKeys } from "../lib/settingsDefaults";
-import { VOICE_RECORD_EVENT, alignPunctuation, buildTimeline, fmtDur, groupTakes, locate, moveTake, packBatches, splitWords, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
+import { VOICE_RECORD_EVENT, alignPunctuation, buildTimeline, fmtDur, groupTakes, locate, moveTake, packBatches, splitWords, takeParagraphs, takesText, takesToTimed, takeTitle, type TimelineItem } from "../lib/voice";
 import { forgetTakes, loadTake, mergeToWav, peaksOf, primeTake, Recording, renderForStt, VoicePlayer } from "../lib/voiceAudio";
 import { sttMissingMessage, sttOptions, whisperOnGpu } from "../lib/stt";
 import { keysClaimed } from "../lib/keyScope";
@@ -21,7 +21,7 @@ interface Props {
   onShow: () => void;
   onPatchTakes: (fn: (t: VoiceTake[]) => VoiceTake[]) => void;
   onToTimed: (doc: TimedDoc, words: number) => void;
-  onInsertText: (paragraphs: string[]) => void;
+  onInsertText: (paragraphs: ReturnType<typeof takeParagraphs>) => void;
   onOpenSettings: () => void;
   onToast: (msg: string, kind?: "error" | "info") => void;
 }
@@ -484,7 +484,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
 
   const toTimed = async () => {
     if (!takes.length) return;
-    const missing = takes.filter((t) => !t.stt).map((t) => t.id);
+    const missing = takes.filter((t) => !t.stt && !t.note).map((t) => t.id);
     if (missing.length) {
       if (needStt()) return;
       onToast(`${missing.length} parça önce yazıya çevriliyor…`);
@@ -495,12 +495,12 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
     const list = takesRef.current.map((t) => (t.stt ? t : { ...t, stt: fresh.current.get(t.file) ?? null }));
     const doc = takesToTimed(list, settingsRef.current.voiceGapMs, `Ses kayıtları (${list.length} parça)`);
     const words = doc.items.filter((i) => i.k === "w").length;
-    if (!words) return onToast("Kayıtlarda konuşma bulunamadı", "error");
+    if (!doc.items.length) return onToast("Kayıtlarda konuşma bulunamadı", "error");
     onToTimed(doc, words);
   };
 
   const insertText = () => {
-    const paras = takesText(takes);
+    const paras = takeParagraphs(takes);
     if (!paras.length) return onToast("Önce parçaları yazıya çevirin", "error");
     onInsertText(paras);
   };
@@ -520,7 +520,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
 
   const startRec = useCallback(
     async (target: Target, link: VoiceLink | null) => {
-      if (recording.current || recRef.current?.phase === "starting" || recRef.current?.phase === "countdown") return;
+      if (recording.current || recRef.current?.phase === "starting" || recRef.current?.phase === "countdown" || recRef.current?.phase === "saving") return;
       player.current.stop();
       setPlaying(false);
       const s = settingsRef.current;
@@ -573,10 +573,18 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
     const r = recording.current;
     const state = recRef.current;
     if (!r || !state || state.phase !== "recording") return;
-    recording.current = null;
-    setRec({ ...state, phase: "saving" });
+    const saving: RecState = { ...state, phase: "saving" };
+    recRef.current = saving;
+    setRec(saving);
     try {
+      if (!r.paused) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        if (!alive.current || recording.current !== r) return;
+        r.level();
+      }
+      recording.current = null;
       const out = await r.finish();
+      if (!alive.current) return;
       if (out.buffer.duration < 0.4) {
         if (alive.current) {
           setRec({ ...state, phase: "ready" });
@@ -586,6 +594,10 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       }
       const pid = projectRef.current.id;
       const { file } = await api.saveVoiceTake(pid, out.bytes, out.ext);
+      if (!alive.current) {
+        void api.deleteVoiceTake(pid, file).catch(() => {});
+        return;
+      }
       primeTake(pid, file, out.buffer);
       const duration = out.buffer.duration;
       let id: string;
@@ -626,7 +638,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   /** Süren kaydı atar (diske hiçbir şey yazılmaz); aynı yer için hemen yeniden kayıt alınabilir. */
   const cancelRec = useCallback(() => {
     const state = recRef.current;
-    if (!state) return;
+    if (!state || state.phase === "saving") return;
     recording.current?.cancel();
     recording.current = null;
     if (state.phase === "recording" || state.phase === "starting") setRec({ ...state, phase: "ready" });
@@ -698,7 +710,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   // ---------------------------------------------------------------- Dışa aktarma
 
   const exportAudio = async (only?: VoiceTake) => {
-    const list = only ? [only] : takes;
+    const list = (only ? [only] : takes).filter((t) => !t.note);
     if (!list.length) return;
     const base = (only ? `${project.title} - ${takeTitle(only, takes.indexOf(only))}` : `${project.title} - ses`).replace(/[\\/:*?"<>|]+/g, " ").trim() || "ses";
     let path: string | null = null;
@@ -817,6 +829,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   const liveCur = locate(timeline, livePos);
   const playingId = playing && liveCur ? timeline[liveCur.index]?.take.id ?? null : null;
   const doneCount = takes.filter((t) => t.stt).length;
+  const hasText = takes.some((t) => t.note || t.stt?.text.trim());
   const busyCount = stt.busy.size;
   const r = recording.current;
   const replacingId = rec?.target.mode === "replace" ? rec.target.id : null;
@@ -833,7 +846,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
   const liveBars = liveLevels.current;
   const liveMax = Math.max(0.05, ...liveBars);
   const liveChip = (
-    <div key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title="Kayıt alınıyor">
+    <div key="__live" className={"vc live " + (rec?.phase ?? "")} style={{ width: chipWidth(r?.elapsed() ?? 0) }} title={rec?.phase === "saving" ? "Kayıt kaydediliyor" : "Kayıt alınıyor"}>
       <div className="vc-wave">
         {rec?.phase === "recording" || rec?.phase === "saving" ? (
           liveBars.length > 0 && (
@@ -914,6 +927,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
         {...dragProps(it, link)}
       >
         <Wave projectId={project.id} file={t.file} progress={progressOf(it)} />
+        {t.note && <div className="vc-text"><strong>Not</strong>{!words.length && ` · ${t.stt?.text.trim() || takeTitle(t, it.index)}`}</div>}
         {words.length > 0 && (
           <div className="vc-text">
             {words.map((w, wi) => {
@@ -1081,10 +1095,10 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
                   Yazıya çevir <span className="muted">{doneCount}/{takes.length}</span>
                 </button>
                 <button onClick={toTimed} disabled={busyCount > 0}>Zamanlı metne aktar</button>
-                <button onClick={insertText} disabled={!doneCount}>Metni senaryoya ekle</button>
-                <button onClick={copyText} disabled={!doneCount}>Metni kopyala</button>
+                <button onClick={insertText} disabled={!hasText}>Metni senaryoya ekle</button>
+                <button onClick={copyText} disabled={!hasText}>Metni kopyala</button>
                 <div className="menu-sep" />
-                <button onClick={() => void exportAudio()} disabled={exporting}>
+                <button onClick={() => void exportAudio()} disabled={exporting || takes.every((t) => t.note)}>
                   {exporting ? "Birleştiriliyor…" : "Tek ses dosyası olarak kaydet"} <span className="muted">MP3 · WAV</span>
                 </button>
                 {hasLinks && (
@@ -1170,7 +1184,7 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
       {ctx && ctxTake && (
         <div
           className="menu ctx-menu"
-          style={{ left: Math.min(ctx.x, window.innerWidth - 240), top: Math.min(ctx.y, window.innerHeight - 260) }}
+          style={{ left: Math.min(ctx.x, window.innerWidth - 240), top: Math.min(ctx.y, window.innerHeight - 290) }}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => setCtx(null)}
         >
@@ -1182,7 +1196,11 @@ export function VoicePane({ project, visible, settings, sttOk, onShow, onPatchTa
           <button onClick={() => !needStt() && void transcribe([ctxTake.id])} disabled={stt.busy.has(ctxTake.id)}>
             {ctxTake.stt ? "Yeniden yazıya çevir" : "Yazıya çevir"}
           </button>
-          <button onClick={() => void exportAudio(ctxTake)}>Dosya olarak kaydet</button>
+          <button onClick={() => {
+            onPatchTakes((ts) => ts.map((t) => t.id === ctxTake.id ? { ...t, note: !ctxTake.note || undefined } : t));
+            if (!ctxTake.note && !ctxTake.stt && sttOk && !stt.busy.has(ctxTake.id)) void transcribe([ctxTake.id]);
+          }}>{ctxTake.note ? "Not işaretini kaldır" : "Nota dönüştür"}</button>
+          <button onClick={() => void exportAudio(ctxTake)} disabled={ctxTake.note || exporting}>Dosya olarak kaydet</button>
           {ctxTake.link && <button onClick={() => unlink(ctxTake.id)}>Bölüm başlığından ayır</button>}
           <div className="menu-sep" />
           <button className="danger" onClick={() => remove(ctxTake.id)}>
