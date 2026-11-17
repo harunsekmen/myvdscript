@@ -396,6 +396,7 @@ export default function App() {
               onChat={onChat}
               onReprocess={pipe.reprocess}
               onCustomRun={pipe.customRun}
+              onEditText={pipe.editText}
               onCancel={pipe.cancel}
               onResume={pipe.resume}
               onFetchUrl={pipe.fetchActive}

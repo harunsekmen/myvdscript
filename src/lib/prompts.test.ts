@@ -1,17 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { hashString } from "./hash";
-import { buildCustomRunSystemPrompt, DEFAULT_SYSTEM_PROMPT, isLegacySystemPrompt, LEGACY_SYSTEM_PROMPT_HASHES } from "./prompts";
+import { buildEditMessage, DEFAULT_SYSTEM_PROMPT, isLegacySystemPrompt, LEGACY_SYSTEM_PROMPT_HASHES } from "./prompts";
 
-describe("özel istemle işleme", () => {
-  it("özel istek temel istemin sonuna eklenir, kurallar düşmez", () => {
-    const sys = buildCustomRunSystemPrompt(DEFAULT_SYSTEM_PROMPT, "Çocuklar için anlat.");
-    expect(sys.startsWith(DEFAULT_SYSTEM_PROMPT.trim())).toBe(true);
-    expect(sys).toContain("Çocuklar için anlat.");
-    expect(sys).toContain("SPONSORLU KISIMLAR");
+describe("AI metin düzenleme", () => {
+  it("mevcut metni, altyazıyı ve talimatı ayrı alanlarda gönderir", () => {
+    expect(JSON.parse(buildEditMessage("Mevcut metin", "Ham altyazı", "  Düzelt  "))).toEqual({ mevcutMetin: "Mevcut metin", hamAltyazi: "Ham altyazı", duzenlemeTalimati: "Düzelt" });
   });
-
-  it("boş özel istek temel istemi değiştirmez", () => {
-    expect(buildCustomRunSystemPrompt("Ana", "  ")).toBe("Ana");
+  it("altyazı yoksa mevcut metni korur", () => {
+    expect(JSON.parse(buildEditMessage("Metin", "", "Düzelt")).hamAltyazi).toBeNull();
   });
 });
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
-import { api, type SubOption, type SubtitleList } from "../lib/api";
+import { api, streamChat, type SubOption, type SubtitleList } from "../lib/api";
 import { advanceStage } from "../lib/home";
 import { PipelineError, processTranscript, type PipelineRun, type ResumeState } from "../lib/pipeline";
-import { buildCustomRunSystemPrompt } from "../lib/prompts";
-import { segmentsToMarkdown } from "../lib/segmentParser";
+import { buildEditMessage, EDIT_SYSTEM_PROMPT } from "../lib/prompts";
+import { parseSegments, segmentsToMarkdown } from "../lib/segmentParser";
 import {
   activeSource,
   addSource,
@@ -127,11 +127,9 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
   }, []);
 
   const run = useCallback(
-    async (pid: string, sourceId: string, text: string, o: { label: string; customPrompt?: string; resume?: Resumable }) => {
-      let s: Settings = settingsRef.current;
+    async (pid: string, sourceId: string, text: string, o: { label: string; resume?: Resumable }) => {
+      const s: Settings = settingsRef.current;
       if (!o.resume) {
-        // Özel istem: temel sistem istemi korunur, kullanıcının istemi ek talimat olarak eklenir.
-        if (o.customPrompt) s = { ...s, systemPrompt: buildCustomRunSystemPrompt(s.systemPrompt, o.customPrompt) };
         if (!s.model) {
           setProc({ ...IDLE, sourceId, projectId: pid, error: "Önce Ayarlar'dan bir model seçin." });
           openSettings();
@@ -181,7 +179,7 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
 
   /** Açık projenin etkin kaynağı için AI işlemesi. */
   const runActive = useCallback(
-    (sourceId: string, text: string, o: { label: string; customPrompt?: string; resume?: Resumable }) => {
+    (sourceId: string, text: string, o: { label: string; resume?: Resumable }) => {
       const pid = projectRef.current?.id;
       if (pid) void run(pid, sourceId, text, o);
     },
@@ -260,14 +258,45 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
   }, [projectRef, runActive, fetchForSource]);
 
   const customRun = useCallback(
-    (prompt: string) => {
+    async (prompt: string) => {
       const p = projectRef.current;
-      if (!p) return;
+      if (!p || procRef.current.running || !prompt.trim()) return;
       const src = activeSource(p);
-      runActive(src.id, src.transcriptRaw || segmentsToMarkdown(src.segments), { label: "Özel istem", customPrompt: prompt });
+      if (!src.segments.length) return;
+      const cfg = settingsRef.current;
+      if (!cfg.model) { openSettings(); return; }
+      resumeRef.current = null;
+      setProc({ ...IDLE, running: true, phase: "ai", progress: { done: 0, total: 1 }, sourceId: src.id, projectId: p.id });
+      const handle = streamChat({
+        baseUrl: cfg.baseUrl, model: cfg.model, temperature: cfg.temperature,
+        system: EDIT_SYSTEM_PROMPT,
+        user: buildEditMessage(segmentsToMarkdown(src.segments), src.transcriptRaw, prompt),
+        onText: () => {},
+      });
+      let cancelled = false;
+      const job: PipelineRun = { promise: handle.done.then(parseSegments), cancel: () => { cancelled = true; handle.cancel(); } };
+      runRef.current = job;
+      try {
+        const result = await job.promise;
+        if (runRef.current !== job) return;
+        if (cancelled) throw new Error("İptal edildi");
+        if (!result.length || !result.some((s) => s.text.trim())) throw new Error("AI boş metin döndürdü");
+        if (!sourceGone(p.id, src.id)) await updateProject(p.id, (q) => patchSource(q, src.id, (s) => applyProcessed(s, result, "AI ile düzenleme")));
+        setProc(IDLE);
+      } catch (e: any) {
+        if (runRef.current !== job) return;
+        setProc({ ...IDLE, sourceId: src.id, projectId: p.id, error: `${e?.message ?? e} — mevcut metin korundu.` });
+      } finally {
+        if (runRef.current === job) runRef.current = null;
+      }
     },
-    [projectRef, runActive],
+    [projectRef, settingsRef, openSettings, updateProject, sourceGone],
   );
+
+  const editText = useCallback((sourceId: string, segments: Segment[]) => {
+    if (procRef.current.running) return;
+    mutate((p) => patchSource(p, sourceId, (s) => applyProcessed(s, segments, "Hızlı metin düzeltme")));
+  }, [mutate]);
 
   /** Etkin kaynak boşsa (ilk bağlantı) onu kullanır. */
   const fetchActive = useCallback(
@@ -396,6 +425,7 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
     resume,
     reprocess,
     customRun,
+    editText,
     fetchActive,
     fetchForSource,
     dequeue,

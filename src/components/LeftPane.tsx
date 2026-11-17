@@ -6,11 +6,12 @@ import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/seg
 import { activeSource, sourceLabel } from "../lib/sources";
 import { speak } from "../lib/speech";
 import { VOICE_RECORD_EVENT } from "../lib/voice";
-import type { ChatMessage, Insight, ProcState, Project, SentenceMark, Settings } from "../lib/types";
+import type { ChatMessage, Insight, ProcState, Project, SentenceMark, Segment, Settings } from "../lib/types";
 import { getVideoState, playAt, subscribeVideo, videoIdOf } from "../lib/youtube";
 import { ChatPanel } from "./ChatPanel";
 import { PromptDialog } from "./Dialogs";
 import { InsightCard } from "./InsightCard";
+import { TextEditDialog } from "./TextEditDialog";
 import { SpeakIcon } from "./SpeakIcon";
 
 /** Seslendirme tek seferde en fazla bu kadar karakteri okur (sağ panelle aynı sınır). */
@@ -27,6 +28,7 @@ interface Props {
   onInsights: (sourceId: string, insights: Insight[]) => void;
   onChat: (sourceId: string, chat: ChatMessage[]) => void;
   onReprocess: () => void;
+  onEditText: (sourceId: string, segments: Segment[]) => void;
   onCustomRun: (prompt: string) => void;
   onCancel: () => void;
   onResume: () => void;
@@ -238,6 +240,7 @@ export function LeftPane({
   onChat,
   onReprocess,
   onCustomRun,
+  onEditText,
   onCancel,
   onResume,
   onFetchUrl,
@@ -256,6 +259,7 @@ export function LeftPane({
   const busyHere = proc.running && mine;
   const segments = mine && proc.live ? proc.live : source.segments;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [sel, setSel] = useState<Sel | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -282,6 +286,8 @@ export function LeftPane({
     setSel(null);
     setLive(null);
     setAdding(false);
+    setCustomOpen(false);
+    setEditOpen(false);
     setChatQuote(null);
   }, [project.id, source.id]);
 
@@ -575,6 +581,7 @@ export function LeftPane({
             ✦ Sor{(source.chat?.length ?? 0) > 0 ? ` (${Math.ceil((source.chat?.length ?? 0) / 2)})` : ""}
           </button>
         )}
+        {segments.length > 0 && <button className="btn small" disabled={proc.running || queued} onClick={() => setEditOpen(true)}>Metin düzelt</button>}
         {busyHere ? (
           <>
             <span className="muted">
@@ -618,7 +625,7 @@ export function LeftPane({
                         setCustomOpen(true);
                       }}
                     >
-                      Özel istemle işle… <span className="muted">Varsayılan istemin üstüne kendi talimatın</span>
+                      AI ile düzenle… <span className="muted">Mevcut metin + altyazı bağlamı + talimatın</span>
                     </button>
                   )}
                   {source.url.trim() && (
@@ -844,10 +851,12 @@ export function LeftPane({
         </div>
       )}
 
+      {editOpen && !proc.running && <TextEditDialog segments={source.segments} onApply={(next) => onEditText(source.id, next)} onClose={() => setEditOpen(false)} />}
+
       {customOpen && (
         <PromptDialog
-          title="Özel istemle işle"
-          hint="Altyazı, ayarlardaki sistem istemiyle yeniden işlenir; yazdığınız istem onun üstüne ek talimat olarak eklenir. Mevcut bölümler ve açıklama vurguları yenilenir. Ctrl+Enter ile çalıştırabilirsiniz."
+          title="AI ile düzenle"
+          hint="Mevcut metnin tamamı ve bağlam için ham altyazı AI’a gönderilir. Yazdığınız talimata göre mevcut metin düzenlenir. Önceki sürüm geçmişte saklanır. Ctrl+Enter ile gönderin."
           placeholder={CUSTOM_PROMPT_PLACEHOLDER}
           confirmLabel="Çalıştır"
           onCancel={() => setCustomOpen(false)}
