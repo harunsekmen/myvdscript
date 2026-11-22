@@ -10,7 +10,7 @@ pub fn save_image(project_id: String, data_base64: String, ext: String) -> Resul
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => ext,
         _ => "png".to_string(),
     };
-    let payload = data_base64.split(',').last().unwrap_or("");
+    let payload = data_base64.split(',').next_back().unwrap_or("");
     let bytes = STANDARD.decode(payload.trim()).map_err(|e| format!("Resim çözülemedi: {e}"))?;
     let dir = store::project_dir(&project_id)?.join("images");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

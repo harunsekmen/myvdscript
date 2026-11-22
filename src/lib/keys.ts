@@ -51,3 +51,10 @@ export function prettyCombo(combo: string): string {
     .map((p) => PRETTY[p] ?? p)
     .join("+");
 }
+
+const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+export const appShortcutLabels = {
+  projects: mac ? "⌘K" : "Ctrl+K",
+  home: mac ? "⌘⇧H" : "Ctrl+H",
+  copy: mac ? "⌘⇧C" : "Ctrl+Shift+C",
+};

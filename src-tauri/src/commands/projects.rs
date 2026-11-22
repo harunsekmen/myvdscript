@@ -1,6 +1,7 @@
 use crate::store;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::Path;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -125,25 +126,27 @@ pub fn load_project(id: String) -> Result<Value, String> {
     let mut v: Value = serde_json::from_str(&text).map_err(|e| format!("Proje bozuk: {e}"))?;
     // Klasör taşınmış olabilir: resim yollarını güncel proje klasörüne çevir.
     let images = store::project_dir(&id)?.join("images");
-    fix_image_paths(&mut v, &id, &images.to_string_lossy());
+    fix_image_paths(&mut v, &id, &images);
     Ok(v)
 }
 
-fn fix_image_paths(v: &mut Value, id: &str, images_dir: &str) {
+fn fix_image_paths(v: &mut Value, id: &str, images_dir: &Path) {
     let fix = |s: &str| -> Option<String> {
         let marker = format!("{id}\\images\\");
         let marker_fwd = format!("{id}/images/");
+        let marker_mixed = format!("{id}/images\\");
         let name = if let Some(i) = s.find(&marker) {
             &s[i + marker.len()..]
         } else if let Some(i) = s.find(&marker_fwd) {
             &s[i + marker_fwd.len()..]
         } else {
-            return None;
+            let i = s.find(&marker_mixed)?;
+            &s[i + marker_mixed.len()..]
         };
-        if name.is_empty() || name.contains(['\\', '/']) {
+        if name.is_empty() || matches!(name, "." | "..") || name.contains(['\\', '/', ':']) {
             return None;
         }
-        Some(format!("{images_dir}\\{name}"))
+        Some(images_dir.join(name).to_string_lossy().into_owned())
     };
     match v {
         Value::String(s) => {
@@ -238,11 +241,28 @@ mod tests {
             "imageMeta": { old: { "note": "n" } },
             "other": r"C:\Old\something.png"
         });
-        fix_image_paths(&mut v, "abc", r"D:\New\projects\abc\images");
-        let want = r"D:\New\projects\abc\images\x.png";
+        let images = Path::new("moved").join("projects").join("abc").join("images");
+        fix_image_paths(&mut v, "abc", &images);
+        let want = images.join("x.png");
+        let want = want.to_str().unwrap();
         assert_eq!(v["editorDoc"]["attrs"]["path"], want);
         assert!(v["imageMeta"].get(want).is_some());
         assert_eq!(v["other"], r"C:\Old\something.png");
+    }
+
+    #[test]
+    fn image_paths_repair_posix_and_previous_macos_mixed_separators() {
+        let mut v = json!([
+            "/old/abc/images/kapak.png",
+            "/old/abc/images\\kapak.png",
+            "/old/other/images/irrelevant.png"
+        ]);
+        let images = Path::new("restored").join("abc").join("images");
+        fix_image_paths(&mut v, "abc", &images);
+        let want = images.join("kapak.png");
+        assert_eq!(v[0], want.to_str().unwrap());
+        assert_eq!(v[1], v[0]);
+        assert_eq!(v[2], "/old/other/images/irrelevant.png");
     }
 
     #[test]

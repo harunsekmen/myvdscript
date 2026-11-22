@@ -22,6 +22,7 @@ import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, i
 import { activeSource, patchSource, removeSource, sourceLabel, subtitleLang } from "./lib/sources";
 import { exportTimed } from "./lib/timed";
 import { refreshWhisper, subscribeWhisper, sttReady, whisperStatus } from "./lib/stt";
+import { appShortcutLabels } from "./lib/keys";
 import { keysClaimed } from "./lib/keyScope";
 import { disfluentWords } from "./lib/disfluency";
 import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc, VoiceTake } from "./lib/types";
@@ -283,13 +284,13 @@ export default function App() {
   // ---- Kısayollar ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.isComposing) return;
       // Tam ekran video / kare görüntüleyici açıkken uygulama kısayolları çalışmaz.
       if (keysClaimed() === "exclusive") return;
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpenSignal((n) => n + 1);
-      } else if (e.key.toLowerCase() === "h" && !e.shiftKey) {
+      } else if (e.key.toLowerCase() === "h" && (e.metaKey ? e.shiftKey : !e.shiftKey)) {
         e.preventDefault();
         goHome();
       } else if (e.shiftKey && e.key.toLowerCase() === "c") {
@@ -472,7 +473,7 @@ export default function App() {
 
       <footer className="statusbar">
         <span className="muted">
-          {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · Ctrl+K proje · Ctrl+H ana sayfa · Ctrl+Shift+C kopyala
+          {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · {appShortcutLabels.projects} proje · {appShortcutLabels.home} ana sayfa · {appShortcutLabels.copy} kopyala
         </span>
         <span className="spacer" />
         {showProject && (

@@ -1,3 +1,4 @@
+import { appShortcutLabels } from "../lib/keys";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { useVideoStats } from "../hooks/useVideoStats";
 import { api, type ProjectPatch } from "../lib/api";
@@ -640,7 +641,7 @@ export function HomePage({ projects, settings, runningId, queuedIds, videoStats,
       <div className="home-bar">
         <div className="home-search">
           <Icon d={I.search} size={14} />
-          <input ref={searchRef} placeholder="Ara… (Ctrl+K)" value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
+          <input ref={searchRef} placeholder={`Ara… (${appShortcutLabels.projects})`} value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
         </div>
         <div className="s-seg home-sort" role="radiogroup" aria-label="Sırala">
           {SORTS.map((s) => (

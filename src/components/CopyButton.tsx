@@ -1,3 +1,4 @@
+import { appShortcutLabels } from "../lib/keys";
 import { useEffect, useRef, useState } from "react";
 import type { CopyMode } from "../lib/copyExport";
 
@@ -37,7 +38,7 @@ export function CopyButton({ onCopy, timed = false }: { onCopy: (mode: CopyMode)
       <button
         className="copy-main"
         onClick={() => run("markdown")}
-        title={timed ? "Zamanlı metni not ve resimleriyle kopyala (Ctrl+Shift+C)" : "Markdown olarak kopyala (Ctrl+Shift+C)"}
+        title={`${timed ? "Zamanlı metni not ve resimleriyle kopyala" : "Markdown olarak kopyala"} (${appShortcutLabels.copy})`}
       >
         {done ? <CheckIcon /> : <CopyIcon />}
         {done ? "Kopyalandı" : timed ? "Zamanlıyı kopyala" : "Tümünü kopyala"}

@@ -1,3 +1,4 @@
+import { appShortcutLabels } from "../lib/keys";
 import { useEffect, useRef, useState } from "react";
 import type { ProjectPatch } from "../lib/api";
 import type { ProjectMeta, StageDef } from "../lib/types";
@@ -55,7 +56,7 @@ export function TopBar(p: Props) {
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region><img src="/icon.svg" alt="" width="20" height="20" />Script Atölyesi</div>
-      <button className={"btn home-btn" + (p.view === "home" ? " on" : "")} onClick={p.onHome} title="Ana sayfa (Ctrl+H)">
+      <button className={"btn home-btn" + (p.view === "home" ? " on" : "")} onClick={p.onHome} title={`Ana sayfa (${appShortcutLabels.home})`}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" />
         </svg>
@@ -64,7 +65,7 @@ export function TopBar(p: Props) {
       {p.view === "project" && (
       <div className="proj-group">
       <div className="dropdown" ref={ref}>
-        <button className="btn proj-btn" onClick={() => setOpen(!open)} title="Projeler (Ctrl+K)">
+        <button className="btn proj-btn" onClick={() => setOpen(!open)} title={`Projeler (${appShortcutLabels.projects})`}>
           <span className="proj-name">{current?.title ?? "Proje seç…"}</span>
           <span className="muted">▾</span>
         </button>
