@@ -16,11 +16,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Download draft Windows executable
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Fetch the Windows yt-dlp sidecar
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download v0.2.0 --repo $env:GITHUB_REPOSITORY --pattern 'script-atolyesi_windows_x64.exe' --dir $env:RUNNER_TEMP
+        run: |
+          $target = 'src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe'
+          New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+          Invoke-WebRequest 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe' -OutFile $target
+          if ((Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d') {
+            throw 'yt-dlp checksum mismatch'
+          }
+      - run: npm run tauri build -- --debug --no-bundle
       - name: Exercise the installed webview and data store
         shell: pwsh
-        run: node .github/scripts/windows-desktop-smoke.mjs (Join-Path $env:RUNNER_TEMP 'script-atolyesi_windows_x64.exe')
+        run: node .github/scripts/windows-desktop-smoke.mjs (Resolve-Path 'src-tauri/target/debug/script-atolyesi.exe')
