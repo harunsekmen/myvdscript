@@ -13,6 +13,7 @@ YouTube script yazım aracı (Tauri 2 + React). Video linkinden altyazı çeker,
 - Homebrew ile `brew install yt-dlp deno ffmpeg`. FFmpeg medya dönüştürme ve ses birleştirme içindir.
 - `npm ci` ve `npm run tauri dev` ile geliştirin.
 - `npm run tauri build -- --bundles app` ile `src-tauri/target/release/bundle/macos/` altında uygulama paketi oluşturun.
+- Codex beceri dizinleriniz macOS tarafından korunan klasörlere bağlanıyorsa Finder’dan açılan uygulama dosya erişimi isteyebilir. Aynı paketi Terminal’den çalıştırmak için `"$HOME/Applications/Script Atölyesi.app/Contents/MacOS/script-atolyesi"` komutunu kullanın.
 - API anahtarları macOS Keychain'de saklanır. Projeler ve ayarlar `~/Library/Application Support/ScriptAtolyesi` altındadır.
 - Metin işlemesi için Codex CLI kurun ve Terminal’de `codex login` ile ChatGPT oturumunu açın. Ayarlar › Yapay zekâ › Bağlantıyı denetle ile sürümü ve oturumu kontrol edin. Aynı bölümde OpenAI uyumlu sunucu ve model ayarlanabilir.
 - Ses dökümü için Groq seçeneği kullanılabilir. Uygulama içinden indirilen yerel Whisper motoru ve CUDA paketi Windows içindir.

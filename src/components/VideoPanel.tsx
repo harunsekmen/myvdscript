@@ -5,7 +5,7 @@ import { api, streamChat } from "../lib/api";
 import { buildChapterMessage, CHAPTER_PROMPT, parseChapterTitles, sameTitles } from "../lib/chapters";
 import { translatedSentenceAt } from "../lib/segmentParser";
 import type { Segment, Settings } from "../lib/types";
-import { attachFrame, getVideoState, pauseVideo, playAt, resumeVideo, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
+import { attachFrame, cueAt, getVideoState, pauseVideo, playAt, resumeVideo, seekTo, setRate, setVolume, subscribeVideo, toggleMute, videoIdOf } from "../lib/youtube";
 import { FrameViewer } from "./FrameViewer";
 import { claimKeys } from "../lib/keyScope";
 
@@ -272,15 +272,16 @@ export function VideoPanel({ url, title, marks, pendingSeek, onSeeked, transcrip
 
   const ready = !!id && vs.ready && vs.videoId === id;
   useEffect(() => {
-    if (!ready || pendingSeek == null) return;
+    const state = getVideoState();
+    if (pendingSeek == null || state.videoId !== id || !state.ready || window.location.protocol === "tauri:" && !embedBase) return;
     try {
-      playAt(pendingSeek);
+      cueAt(pendingSeek);
     } catch (error) {
       onToast(`Video oynatılamadı: ${String(error)}`, "error");
     } finally {
       onSeeked();
     }
-  }, [ready, pendingSeek, onSeeked, onToast]);
+  }, [ready, id, embedBase, pendingSeek, onSeeked, onToast]);
 
   if (!id) return null;
   const time = ready ? vs.time : 0;

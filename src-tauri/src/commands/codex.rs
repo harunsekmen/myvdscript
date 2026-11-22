@@ -181,7 +181,7 @@ pub async fn run(
     for feature in ["shell_tool", "unified_exec", "shell_snapshot", "multi_agent", "multi_agent_v2", "plugins", "hooks", "apps"] {
         command.args(["--disable", feature]);
     }
-    command.args(["-c", "mcp_servers={}", "-c", "project_doc_max_bytes=0", "-c",
+    command.args(["-c", "mcp_servers={}", "-c", "project_doc_max_bytes=0", "-c", "skills.include_instructions=false", "-c",
         if options.web { "web_search=\"live\"" } else { "web_search=\"disabled\"" }]);
     command.args(["-c", &format!("developer_instructions={}", json!(INSTRUCTIONS))]);
     if !options.model.trim().is_empty() {

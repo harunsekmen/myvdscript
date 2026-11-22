@@ -141,6 +141,16 @@ export function playAt(from: number, to?: number | null) {
   else pending = { from, to: to ?? undefined };
 }
 
+/** Kullanıcı oynatmaya basana kadar videoyu seçilen zamana hazırlar. */
+export function cueAt(from: number) {
+  if (!frame || !st.videoId || !st.ready) throw new Error("Video paneli henüz hazır değil");
+  const time = Math.max(0, from);
+  stopAt = null;
+  started = false;
+  command("cueVideoById", [{ videoId: st.videoId, startSeconds: time }]);
+  set({ time, playing: false });
+}
+
 /** Duraklatılan videoyu kaldığı yerden sürdürür (yeniden yüklemeden); hiç başlamadıysa yükler. */
 export function resumeVideo() {
   if (!frame || !st.videoId) throw new Error("Video paneli yok");

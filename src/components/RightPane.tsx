@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
 import { closeHistory } from "@tiptap/pm/history";
+import type { EditorView } from "@tiptap/pm/view";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, onSttProgress } from "../lib/api";
 import { sttMissingMessage, sttOptions, whisperOnGpu } from "../lib/stt";
@@ -132,6 +133,30 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
     }
   };
 
+  const scheduleSelection = (view: EditorView) => {
+    setTimeout(() => {
+      const { from, to, empty } = view.state.selection;
+      if (empty) return;
+      const text = view.state.doc.textBetween(from, to, " ").trim().replace(/\s+/g, " ");
+      if (!/[\p{L}\p{N}]/u.test(text)) return;
+      const noteType = view.state.schema.marks[NOTE_MARK];
+      const note = !!noteType && view.state.doc.rangeHasMark(from, to, noteType);
+      const canSpeak = to - from <= 200 && /\p{L}/u.test(text);
+      const sel = window.getSelection();
+      let rect: DOMRect | null = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+      if (!rect || !rect.width) {
+        const a = view.coordsAtPos(from);
+        const b = view.coordsAtPos(to);
+        rect = new DOMRect(a.left, a.top, Math.max(b.right - a.left, 1), b.bottom - a.top);
+      }
+      // Uzun seçimde üst kenar ekran dışında kalabilir; balon görünür alanda tutulur
+      const box = view.dom.closest(".editor-scroll")?.getBoundingClientRect();
+      const y = Math.max(rect.top, (box?.top ?? 0) + 44);
+      setPick({ text, x: rect.left + rect.width / 2, y, speak: canSpeak, note });
+    }, 0);
+    return false;
+  };
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4, 5, 6] } }),
@@ -170,30 +195,8 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
           setPick(null);
           return false;
         },
-        mouseup: (view) => {
-          // Seçim oturunca seçimin tam ortasının üstünde balon: dinle (kısa seçimlerde) ve AI notuna çevir
-          setTimeout(() => {
-            const { from, to, empty } = view.state.selection;
-            if (empty) return;
-            const text = view.state.doc.textBetween(from, to, " ").trim().replace(/\s+/g, " ");
-            if (!/[\p{L}\p{N}]/u.test(text)) return;
-            const noteType = view.state.schema.marks[NOTE_MARK];
-            const note = !!noteType && view.state.doc.rangeHasMark(from, to, noteType);
-            const canSpeak = to - from <= 200 && /\p{L}/u.test(text);
-            const sel = window.getSelection();
-            let rect: DOMRect | null = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-            if (!rect || !rect.width) {
-              const a = view.coordsAtPos(from);
-              const b = view.coordsAtPos(to);
-              rect = new DOMRect(a.left, a.top, Math.max(b.right - a.left, 1), b.bottom - a.top);
-            }
-            // Uzun seçimde üst kenar ekran dışında kalabilir; balon görünür alanda tutulur
-            const box = view.dom.closest(".editor-scroll")?.getBoundingClientRect();
-            const y = Math.max(rect.top, (box?.top ?? 0) + 44);
-            setPick({ text, x: rect.left + rect.width / 2, y, speak: canSpeak, note });
-          }, 0);
-          return false;
-        },
+        mouseup: scheduleSelection,
+        keyup: scheduleSelection,
       },
       handleClickOn: (_v, _pos, node) => {
         if (node.type.name === "imageChip") {
