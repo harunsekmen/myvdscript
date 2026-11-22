@@ -90,6 +90,8 @@ interface Props {
   title: string;
   /** Cümle başlangıç zamanları (sn, sıralı); önceki/sonraki cümle düğmeleri için. */
   marks: number[];
+  pendingSeek: number | null;
+  onSeeked: () => void;
   /** `[dk:sn] metin` biçimli orijinal altyazı; çalan satırı göstermek için. */
   transcriptRaw: string;
   /** Orijinal altyazının dil kodu (bilinmiyorsa boş). */
@@ -104,7 +106,7 @@ interface Props {
 }
 
 /** Orta panel: gömülü YouTube videosu, oynatma kontrolleri, canlı altyazı, bölümler ve video bilgisi. */
-export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segments, chaptersTr, onChaptersTr, settings, onToast }: Props) {
+export function VideoPanel({ url, title, marks, pendingSeek, onSeeked, transcriptRaw, origLang, segments, chaptersTr, onChaptersTr, settings, onToast }: Props) {
   const id = videoIdOf(url);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [embedBase, setEmbedBase] = useState<string>();
@@ -268,8 +270,19 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
     return () => window.removeEventListener("keydown", key);
   }, [fs, id, shotOpen]);
 
+  const ready = !!id && vs.ready && vs.videoId === id;
+  useEffect(() => {
+    if (!ready || pendingSeek == null) return;
+    try {
+      playAt(pendingSeek);
+    } catch (error) {
+      onToast(`Video oynatılamadı: ${String(error)}`, "error");
+    } finally {
+      onSeeked();
+    }
+  }, [ready, pendingSeek, onSeeked, onToast]);
+
   if (!id) return null;
-  const ready = vs.ready && vs.videoId === id;
   const time = ready ? vs.time : 0;
 
   // Cümle gezinmesi: çalan/duraklayan konuma göre önceki, bu ve sonraki cümle.

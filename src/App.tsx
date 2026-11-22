@@ -7,6 +7,7 @@ import { HomePage } from "./components/HomePage";
 import { LeftPane } from "./components/LeftPane";
 import { RightPane, type RightTab } from "./components/RightPane";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { SynthesisDialog } from "./components/SynthesisDialog";
 import { SubtitlePicker } from "./components/SubtitlePicker";
 import { TopBar } from "./components/TopBar";
 import { VideoPanel } from "./components/VideoPanel";
@@ -26,7 +27,7 @@ import { refreshWhisper, subscribeWhisper, sttReady, whisperStatus } from "./lib
 import { appShortcutLabels } from "./lib/keys";
 import { keysClaimed } from "./lib/keyScope";
 import { disfluentWords } from "./lib/disfluency";
-import type { ChatMessage, ImageMeta, Insight, Settings, TimedDoc, VoiceTake } from "./lib/types";
+import type { ChatMessage, ImageMeta, Insight, Settings, Synthesis, SynthesisCitation, TimedDoc, VoiceTake } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
 import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
 
@@ -60,6 +61,9 @@ export default function App() {
   const [tab, setTab] = useState<RightTab>("write");
   const [models, setModels] = useState<string[]>([]);
   const getDocRef = useRef<() => any>(() => null);
+  const insertRef = useRef<(markdown: string) => boolean>(() => false);
+  const [synthesisOpen, setSynthesisOpen] = useState(false);
+  const [pendingSeek, setPendingSeek] = useState<{ sourceId: string; t: number } | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [openSignal, setOpenSignal] = useState(0);
@@ -228,6 +232,8 @@ export default function App() {
 
   const goHome = useCallback(() => {
     setView("home");
+    setSynthesisOpen(false);
+    setPendingSeek(null);
     void saver.flush();
   }, [saver]);
 
@@ -359,6 +365,31 @@ export default function App() {
     getDocRef.current = fn;
   }, []);
 
+  const registerInsert = useCallback((fn: (markdown: string) => boolean) => { insertRef.current = fn; }, []);
+  const closeSynthesis = useCallback(() => setSynthesisOpen(false), []);
+  const saveSynthesis = async (run: Synthesis) => {
+    if (!project) return;
+    await updateProject(project.id, (p) => ({
+      ...p,
+      syntheses: [run, ...(p.syntheses ?? []).filter((x) => x.id !== run.id)].slice(0, 5),
+    }));
+    await saver.flush();
+  };
+  const seekSynthesis = (citation: SynthesisCitation) => {
+    onSelectSource(citation.sourceId);
+    setPendingSeek({ sourceId: citation.sourceId, t: citation.t });
+    closeSynthesis();
+  };
+  const insertSynthesis = (markdown: string) => {
+    if (!insertRef.current(markdown)) {
+      toast("Senaryo editöre aktarılamadı.", "error");
+      return;
+    }
+    setTab("write");
+    closeSynthesis();
+  };
+  const clearPendingSeek = useCallback(() => setPendingSeek(null), []);
+
   const statusText = {
     idle: "",
     pending: "Değişiklikler bekliyor…",
@@ -392,6 +423,7 @@ export default function App() {
         onDelete={() => project && setDialog({ kind: "delete", id: project.id })}
         onClearAll={() => setDialog({ kind: "clear" })}
         onSettings={() => setShowSettings(true)}
+        onSynthesis={() => setSynthesisOpen(true)}
       />
 
       {showProject && project && source ? (
@@ -431,6 +463,8 @@ export default function App() {
                   url={source.url}
                   title={source.title.trim() || project.title}
                   marks={videoMarks}
+                  pendingSeek={pendingSeek?.sourceId === source.id ? pendingSeek.t : null}
+                  onSeeked={clearPendingSeek}
                   transcriptRaw={source.transcriptRaw}
                   origLang={subtitleLang(source)}
                   segments={source.segments}
@@ -459,6 +493,7 @@ export default function App() {
               onMeta={onMeta}
               onToast={toast}
               registerGetDoc={registerGetDoc}
+              registerInsert={registerInsert}
               onCopy={copy}
               onCount={setWordCount}
             />
@@ -495,6 +530,9 @@ export default function App() {
         {showProject && wordCount && <span className="status-count muted tnum">{wordCount}</span>}
       </footer>
 
+      {showProject && project && synthesisOpen && (
+        <SynthesisDialog key={project.id} project={project} settings={settings} saveRun={saveSynthesis} close={closeSynthesis} seek={seekSynthesis} insert={insertSynthesis} />
+      )}
       {showSettings && (
         <SettingsDialog
           settings={settings}

@@ -130,6 +130,43 @@ export interface VoiceTake {
   stt?: { lang: string; text: string; words: VoiceWord[] } | null;
 }
 
+export interface SynthesisSection {
+  title: string;
+  text: string;
+}
+
+export interface SynthesisCitation {
+  sourceId: string;
+  sourceIndex: number;
+  sectionIndex: number;
+  t: number;
+  quote: string;
+  token: string;
+}
+
+export interface SynthesisDigest {
+  sourceId: string;
+  hash: string;
+  text: string;
+}
+
+export interface Synthesis {
+  id: string;
+  createdAt: number;
+  title: string;
+  prompt: string;
+  tone: string;
+  targetWords: number;
+  sourceIds: string[];
+  provider: Settings["aiProvider"];
+  model: string;
+  effort: string;
+  sections: SynthesisSection[];
+  citations: SynthesisCitation[];
+  digests: SynthesisDigest[];
+  status: "done" | "partial";
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -143,6 +180,7 @@ export interface Project {
   /** Senaryonun parça parça ses kayıtları. */
   takes?: VoiceTake[];
   imageMeta: Record<string, ImageMeta>;
+  syntheses?: Synthesis[];
   /** Ana aşama (Settings.stages içindeki kimlik). */
   stage?: string;
   checklist?: CheckItem[];

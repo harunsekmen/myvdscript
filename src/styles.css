@@ -1010,3 +1010,14 @@ button.vf-title:hover { color: var(--text); }
 .style-drop:hover, .style-drop.dragging { border-color: #7694ff; background: #4c6ef51a; }
 .style-drop:focus-visible { outline: 2px solid #7694ff; outline-offset: 3px; }
 .style-drop:disabled { opacity: .5; cursor: default; }
+
+.synthesis-modal { width: min(760px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.synthesis-modal .modal-body { min-height: 0; }
+.synthesis-modal label:not(.synthesis-sources label) { display: flex; flex-direction: column; gap: 4px; }
+.synthesis-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.synthesis-sources { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 6px; }
+.synthesis-sources input { margin-right: 8px; }
+.synthesis-section { padding: 8px 0; border-top: 1px solid var(--border); }
+.synthesis-citations { display: flex; flex-wrap: wrap; gap: 5px; }
+.synthesis-citations button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.synthesis-preview { white-space: pre-wrap; }

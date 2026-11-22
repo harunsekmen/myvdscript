@@ -20,6 +20,7 @@ interface Props {
   onDelete: () => void;
   onClearAll: () => void;
   onSettings: () => void;
+  onSynthesis: () => void;
 }
 
 export function TopBar(p: Props) {
@@ -113,6 +114,7 @@ export function TopBar(p: Props) {
       </div>
       )}
       <div className="spacer" data-tauri-drag-region />
+      {p.view === "project" && <button className="btn small" onClick={p.onSynthesis}>Sentez</button>}
       {p.view === "project" && (
         <button className="icon-btn settings-btn" onClick={p.onNewFromLink} title="Linkten yeni proje başlat" aria-label="Linkten yeni proje başlat">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

@@ -4,6 +4,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
+import { closeHistory } from "@tiptap/pm/history";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, onSttProgress } from "../lib/api";
 import { sttMissingMessage, sttOptions, whisperOnGpu } from "../lib/stt";
@@ -41,6 +42,7 @@ interface Props {
   onMeta: (path: string, meta: ImageMeta | null) => void;
   onToast: (msg: string, kind?: "error" | "info") => void;
   registerGetDoc: (fn: () => any) => void;
+  registerInsert: (fn: (markdown: string) => boolean) => void;
   onCopy: (mode: CopyMode) => Promise<void> | void;
   onCount: (label: string) => void;
 }
@@ -52,7 +54,7 @@ const looksLikeMarkdown = (t: string) =>
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "opus", "wma", "mpeg", "mpga", "mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "ts"];
 
-export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, onCopy, onCount }: Props) {
+export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, registerInsert, onCopy, onCount }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   // Seçim balonu: dinle (kısa seçimlerde) ve AI notuna çevir/notu kaldır
   const [pick, setPick] = useState<{ text: string; x: number; y: number; speak: boolean; note: boolean } | null>(null);
@@ -227,6 +229,18 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
   useEffect(() => {
     registerGetDoc(() => editor?.getJSON() ?? project.editorDoc);
   }, [editor, registerGetDoc, project.editorDoc]);
+
+  useEffect(() => {
+    registerInsert((markdown) => {
+      if (!editor || editor.isDestroyed || !markdown.trim()) return false;
+      const end = editor.state.doc.content.size;
+      return editor.chain()
+        .command(({ tr }) => { closeHistory(tr); return true; })
+        .insertContentAt(end, markdown, { contentType: "markdown" })
+        .run();
+    });
+    return () => registerInsert(() => false);
+  }, [editor, registerInsert]);
 
   useEffect(() => setPick(null), [tab]);
 

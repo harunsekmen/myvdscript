@@ -12,6 +12,7 @@ export function providerOptions(settings: Settings, options: {
   temperature?: number;
   web?: boolean;
   schema?: object;
+  effort?: string;
 } = {}) {
   const apiModel = (options.insight && settings.insightModel) || settings.model;
   const codexModel = (options.insight && settings.codexInsightModel) || settings.codexModel;
@@ -25,7 +26,7 @@ export function providerOptions(settings: Settings, options: {
     codex: codex ? {
       path: settings.codexPath,
       model: explicit || codexModel,
-      effort: settings.codexEffort,
+      effort: options.effort || settings.codexEffort,
       timeoutSec: settings.codexTimeoutSec,
       web: options.web ?? false,
       schema: options.schema ?? null,
