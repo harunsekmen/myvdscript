@@ -1,3 +1,4 @@
+import { activeModel } from "../lib/aiProvider";
 import { useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -264,7 +265,7 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
 
   /** Zamanlı metni AI'a zamanlarıyla gönderir; yanlış kelime önerilerini belgeye ekler. */
   const runCheck = async (doc: TimedDoc) => {
-    if (!settings.model) {
+    if (!activeModel(settings)) {
       onToast("AI kelime kontrolü için Ayarlar'dan bir model seçin", "error");
       return;
     }
@@ -297,7 +298,7 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
     const meta = project.imageMeta;
     const r = placeScriptItems(doc, editorDoc, meta);
     const placed = r.images + r.notes;
-    const willRefine = r.approx.length > 0 && !!settings.model;
+    const willRefine = r.approx.length > 0 && !!activeModel(settings);
     const what = [r.images ? `${r.images} resim` : "", r.notes ? `${r.notes} not` : ""].filter(Boolean).join(" ve ");
     const summary = !placed
       ? ""

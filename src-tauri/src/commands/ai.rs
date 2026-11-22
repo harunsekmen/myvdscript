@@ -6,6 +6,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::settings::api_key;
+use super::codex::{self, CodexOptions};
 
 /// Akış sırasında bu süre boyunca hiç veri gelmezse istek başarısız sayılır.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -88,12 +89,33 @@ pub fn ai_stream(
     user: String,
     temperature: f64,
     history: Option<Vec<ChatMsg>>,
+    codex: Option<CodexOptions>,
+    api_fallback: Option<bool>,
 ) {
     let messages = build_messages(&system, history.as_deref().unwrap_or(&[]), &user);
     let event = format!("ai://{request_id}");
     let rid = request_id.clone();
+    let mut runs = state.0.lock().unwrap();
     let handle = tauri::async_runtime::spawn(async move {
-        match run_stream(&app, &event, &base_url, &model, messages, temperature).await {
+        let emit = |kind, text| { let _ = app.emit(&event, AiEvent { kind, text }); };
+        let result = if let Some(options) = codex {
+            match codex::run(&options, &messages, |item| emit("search", item)).await {
+                Ok(answer) => {
+                    emit("delta", answer);
+                    Ok(())
+                }
+                Err(error) if error.unavailable && api_fallback.unwrap_or(false) && !options.web
+                    && !model.trim().is_empty() && !base_url.trim().is_empty() =>
+                {
+                    emit("fallback", "Codex kullanılamadı. Yapılandırılmış API ile devam ediliyor.".into());
+                    run_stream(&app, &event, &base_url, &model, messages, temperature).await
+                }
+                Err(error) => Err(error.message),
+            }
+        } else {
+            run_stream(&app, &event, &base_url, &model, messages, temperature).await
+        };
+        match result {
             Ok(()) => {
                 let _ = app.emit(&event, AiEvent { kind: "done", text: String::new() });
             }
@@ -105,7 +127,7 @@ pub fn ai_stream(
             st.0.lock().unwrap().remove(&rid);
         }
     });
-    state.0.lock().unwrap().insert(request_id, handle);
+    runs.insert(request_id, handle);
 }
 
 async fn run_stream(

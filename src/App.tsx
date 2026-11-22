@@ -1,3 +1,4 @@
+import { activeModel, migrateProvider } from "./lib/aiProvider";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -74,6 +75,12 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 3000);
   }, []);
 
+  useEffect(() => {
+    const fallback = (event: Event) => toast((event as CustomEvent<string>).detail);
+    window.addEventListener("sa-ai-fallback", fallback);
+    return () => window.removeEventListener("sa-ai-fallback", fallback);
+  }, [toast]);
+
   const patchSettings = useCallback(
     (patch: Partial<Settings>) => {
       const next = { ...settingsRef.current, ...patch };
@@ -108,7 +115,11 @@ export default function App() {
 
   const refreshModels = useCallback(async () => {
     try {
-      setModels(await api.listModels(settingsRef.current.baseUrl));
+      const current = settingsRef.current;
+      const list = current.aiProvider === "codex"
+        ? (await api.codexStatus(current.codexPath)).models
+        : await api.listModels(current.baseUrl);
+      if (settingsRef.current.aiProvider === current.aiProvider) setModels(list);
     } catch {
       /* sessiz: anahtar/adres henüz girilmemiş olabilir */
     }
@@ -118,7 +129,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const loaded = await api.loadSettings();
-      const s: Settings = { ...DEFAULTS, ...loaded };
+      const s: Settings = { ...DEFAULTS, ...loaded, aiProvider: migrateProvider(loaded) };
       if (!Array.isArray(s.stages) || !s.stages.length) s.stages = DEFAULTS.stages;
       else s.stages = migrateStages(s.stages);
       if (!Array.isArray(s.defaultChecklist)) s.defaultChecklist = DEFAULTS.defaultChecklist;
@@ -473,7 +484,7 @@ export default function App() {
 
       <footer className="statusbar">
         <span className="muted">
-          {settings.model ? `Model: ${settings.model}` : "Model seçilmedi"} · {appShortcutLabels.projects} proje · {appShortcutLabels.home} ana sayfa · {appShortcutLabels.copy} kopyala
+          {activeModel(settings) ? `Model: ${activeModel(settings)}` : "Model seçilmedi"} · {appShortcutLabels.projects} proje · {appShortcutLabels.home} ana sayfa · {appShortcutLabels.copy} kopyala
         </span>
         <span className="spacer" />
         {showProject && (

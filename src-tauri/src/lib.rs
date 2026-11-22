@@ -7,7 +7,7 @@ mod ytdlp;
 #[cfg(target_os = "macos")]
 mod youtube_embed;
 
-use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos, voice, whisper};
+use commands::{ai, codex, export, external, images, projects, settings, stt, transcript, tts, videos, voice, whisper};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -84,6 +84,7 @@ pub fn run() {
             ai::list_models,
             ai::ai_stream,
             ai::ai_cancel,
+            codex::codex_status,
             tts::tts,
             transcript::video_meta,
             transcript::video_stream_url,

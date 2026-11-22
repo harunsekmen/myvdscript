@@ -1,3 +1,4 @@
+import { activeModel, providerOptions } from "../lib/aiProvider";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, streamChat } from "../lib/api";
@@ -174,15 +175,13 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const onChTrRef = useRef(onChaptersTr);
   onChTrRef.current = onChaptersTr;
   useEffect(() => {
-    if (!chapterTitles.length || trTitles || !settings.model) return;
+    if (!chapterTitles.length || trTitles || !activeModel(settings)) return;
     let alive = true;
     setChTrBusy(true);
     const h = streamChat({
-      baseUrl: settings.baseUrl,
-      model: settings.insightModel || settings.model,
+      ...providerOptions(settings, { insight: true, temperature: 0.2 }),
       system: CHAPTER_PROMPT,
       user: buildChapterMessage(chapterTitles),
-      temperature: 0.2,
     });
     h.done
       .then((text) => {
@@ -196,7 +195,7 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
       h.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterTitles, !!trTitles, settings.model, settings.insightModel, settings.baseUrl]);
+  }, [chapterTitles, !!trTitles, settings.model, settings.insightModel, settings.baseUrl, settings.aiProvider, settings.codexPath, settings.codexModel, settings.codexInsightModel, settings.codexEffort, settings.codexTimeoutSec, settings.codexApiFallback]);
 
   // Tam ekran: video kutusu pencereyi kaplar ve pencere de tam ekran olur (iframe yeniden yüklenmez).
   useEffect(() => {

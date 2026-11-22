@@ -29,6 +29,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 tiny_http = "0.12"

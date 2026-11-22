@@ -1,3 +1,4 @@
+import { providerOptions } from "./aiProvider";
 import { streamChat } from "./api";
 import { parseDrops } from "./disfluency";
 import { WORD_CHECK_PROMPT } from "./prompts";
@@ -54,11 +55,9 @@ export async function checkWords(
   for (let i = 0; i < chunks.length; i++) {
     const lines = chunks[i].map((w) => `${w.n} [${fmtTime(w.s, 1)}] ${w.w}`).join("\n");
     const text = await streamChat({
-      baseUrl: s.baseUrl,
-      model: s.model,
+      ...providerOptions(s, { temperature: 0 }),
       system: WORD_CHECK_PROMPT,
       user: `Kelimeler:\n${lines}`,
-      temperature: 0,
     }).done;
     Object.assign(all, parseFixes(text, chunks[i]));
     Object.assign(drops, parseDrops(text, chunks[i]));

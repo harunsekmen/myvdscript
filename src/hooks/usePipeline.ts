@@ -1,3 +1,4 @@
+import { activeModel, providerOptions } from "../lib/aiProvider";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { api, streamChat, type SubOption, type SubtitleList } from "../lib/api";
 import { advanceStage } from "../lib/home";
@@ -130,7 +131,7 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
     async (pid: string, sourceId: string, text: string, o: { label: string; resume?: Resumable }) => {
       const s: Settings = settingsRef.current;
       if (!o.resume) {
-        if (!s.model) {
+        if (!activeModel(s)) {
           setProc({ ...IDLE, sourceId, projectId: pid, error: "Önce Ayarlar'dan bir model seçin." });
           openSettings();
           return;
@@ -264,11 +265,11 @@ export function usePipeline({ projectRef, mutate, updateProject, settingsRef, to
       const src = activeSource(p);
       if (!src.segments.length) return;
       const cfg = settingsRef.current;
-      if (!cfg.model) { openSettings(); return; }
+      if (!activeModel(cfg)) { openSettings(); return; }
       resumeRef.current = null;
       setProc({ ...IDLE, running: true, phase: "ai", progress: { done: 0, total: 1 }, sourceId: src.id, projectId: p.id });
       const handle = streamChat({
-        baseUrl: cfg.baseUrl, model: cfg.model, temperature: cfg.temperature,
+        ...providerOptions(cfg),
         system: EDIT_SYSTEM_PROMPT,
         user: buildEditMessage(segmentsToMarkdown(src.segments), src.transcriptRaw, prompt),
         onText: () => {},

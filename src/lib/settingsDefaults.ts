@@ -22,6 +22,13 @@ export function migrateStages(stages: StageDef[]): StageDef[] {
 
 /** Uygulamanın varsayılan ayarları (ilk açılış ve "varsayılana dön" düğmeleri). */
 export const DEFAULT_SETTINGS: Settings = {
+  aiProvider: "codex",
+  codexPath: "codex",
+  codexModel: "",
+  codexInsightModel: "",
+  codexEffort: "",
+  codexTimeoutSec: 300,
+  codexApiFallback: true,
   styleEnabled: false,
   styleReferences: [],
   baseUrl: "https://api.openai.com/v1",

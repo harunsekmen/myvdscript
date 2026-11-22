@@ -1,3 +1,4 @@
+import { activeModel, providerOptions } from "../lib/aiProvider";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { onYtdlpStatus, streamChat } from "../lib/api";
 import { segStyle } from "../lib/colors";
@@ -339,11 +340,9 @@ export function LeftPane({
       const sourceId = source.id;
       runRef.current?.cancel();
       const h = streamChat({
-        baseUrl: settings.baseUrl,
-        model,
+        ...providerOptions(settings, { insight: true, model }),
         system: settings.insightPrompt,
         user: buildInsightMessage(insight.quote, context),
-        temperature: settings.temperature,
         onText: (t) => setLive({ id: insight.id, text: t }),
       });
       runRef.current = { id: insight.id, cancel: h.cancel };
@@ -364,7 +363,7 @@ export function LeftPane({
 
   const explain = () => {
     if (!sel) return;
-    if (!settings.model) return onToast("Önce Ayarlar'dan bir model seçin", "error");
+    if (!activeModel(settings)) return onToast("Önce Ayarlar'dan bir model seçin", "error");
     const insight: Insight = {
       id: crypto.randomUUID(),
       segmentId: sel.segmentId,
@@ -379,7 +378,7 @@ export function LeftPane({
     setActiveId(insight.id);
     window.getSelection()?.removeAllRanges();
     setSel(null);
-    runInsight(insight, settings.insightModel || settings.model, sel.context);
+    runInsight(insight, activeModel(settings, true), sel.context);
   };
 
   const toggleChat = (open = !chatOpen) => {
@@ -818,7 +817,7 @@ export function LeftPane({
           <div className="chat-divider" onPointerDown={startChatDrag} title="Sürükleyerek boyutlandır" />
           <div className="chat-wrap" style={{ height: `${chatH * 100}%` }}>
             <ChatPanel
-              key={source.id}
+              key={`${source.id}:${settings.aiProvider}`}
               title={source.title.trim() || project.title}
               segments={segments}
               messages={source.chat ?? []}
@@ -872,7 +871,7 @@ export function LeftPane({
           insight={active}
           anchor={anchorRect}
           models={models}
-          defaultModel={settings.insightModel || settings.model}
+          defaultModel={activeModel(settings, true)}
           live={live && live.id === active.id ? live : null}
           onClose={closeCard}
           onDelete={() => removeInsight(active.id)}

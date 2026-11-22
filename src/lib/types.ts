@@ -212,6 +212,13 @@ export interface StyleReference {
 }
 
 export interface Settings {
+  aiProvider: "codex" | "api";
+  codexPath: string;
+  codexModel: string;
+  codexInsightModel: string;
+  codexEffort: string;
+  codexTimeoutSec: number;
+  codexApiFallback: boolean;
   styleEnabled: boolean;
   styleReferences: StyleReference[];
   baseUrl: string;

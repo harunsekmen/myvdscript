@@ -1,3 +1,4 @@
+import { activeModel, providerOptions } from "../lib/aiProvider";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { streamChat } from "../lib/api";
 import { buildChatSystem, chatHistory, chatUserText } from "../lib/chat";
@@ -22,8 +23,8 @@ interface Props {
 
 /** Kaynak metin bağlamında, seçilen modelle çok turlu soru-cevap. */
 export function ChatPanel({ title, segments, messages, settings, models, quote, onClearQuote, onChange, onClose, onToast }: Props) {
-  const fallback = settings.insightModel || settings.model;
-  const [model, setModel] = useState(() => localStorage.getItem(MODEL_KEY) || fallback);
+  const fallback = activeModel(settings, true);
+  const [model, setModel] = useState(() => localStorage.getItem(`${MODEL_KEY}.${settings.aiProvider}`) || (settings.aiProvider === "api" ? localStorage.getItem(MODEL_KEY) : "") || fallback);
   const [input, setInput] = useState("");
   const [live, setLive] = useState<{ text: string; error?: string } | null>(null);
   const runRef = useRef<{ cancel: () => void } | null>(null);
@@ -89,7 +90,7 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
 
   const pickModel = (m: string) => {
     setModel(m);
-    localStorage.setItem(MODEL_KEY, m);
+    localStorage.setItem(`${MODEL_KEY}.${settings.aiProvider}`, m);
   };
 
   const busy = !!live && !live.error;
@@ -102,12 +103,10 @@ export function ChatPanel({ title, segments, messages, settings, models, quote, 
     stickRef.current = true;
     jumpRef.current = true;
     const h = streamChat({
-      baseUrl: settings.baseUrl,
-      model: useModel,
+      ...providerOptions(settings, { insight: true, model: useModel }),
       system: buildChatSystem(title, segments),
       history: chatHistory(before),
       user: chatUserText(ask),
-      temperature: settings.temperature,
       onText: (t) => setLive({ text: t }),
     });
     runRef.current = h;

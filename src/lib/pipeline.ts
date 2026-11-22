@@ -1,3 +1,4 @@
+import { providerOptions } from "./aiProvider";
 import { streamChat, type StreamHandle } from "./api";
 import { buildStyleSystemPrompt } from "./styleReferences";
 import { buildChunkMessage } from "./prompts";
@@ -86,11 +87,9 @@ export function processTranscript(
           if (cancelled) throw new Error(CANCEL_MSG);
           try {
             current = deps.chat({
-              baseUrl: cfg.baseUrl,
-              model: cfg.model,
+              ...providerOptions(cfg),
               system,
               user: buildChunkMessage(chunks[i], prevTitle, i, chunks.length),
-              temperature: cfg.temperature,
               onText: (full) => onSegments(parseSegments(base + full)),
             });
             out = await current.done;

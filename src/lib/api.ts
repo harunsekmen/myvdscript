@@ -1,3 +1,4 @@
+import type { providerOptions } from "./aiProvider";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CheckItem, Project, ProjectMeta, Settings, SttEngine, VideoStat } from "./types";
@@ -109,6 +110,7 @@ export const api = {
   hasYoutubeKey: () => invoke<boolean>("has_youtube_key"),
   setYoutubeKey: (key: string) => invoke<void>("set_youtube_key", { key }),
   testYoutubeKey: () => invoke<void>("test_youtube_key"),
+  codexStatus: (path: string) => invoke<{ version: string; authenticated: boolean; models: string[] }>("codex_status", { path }),
   listModels: (baseUrl: string) => invoke<string[]>("list_models", { baseUrl }),
   saveVoiceTake: (projectId: string, bytes: Uint8Array, ext: string) =>
     invoke<{ file: string }>("save_voice_take", bytes, { headers: { "x-project": projectId, "x-ext": ext } }),
@@ -127,61 +129,59 @@ export interface StreamHandle {
 }
 
 /** Yapay zekâ yanıtını akıtır; onText her delta'da toplanan metni verir. */
-export function streamChat(opts: {
-  baseUrl: string;
-  model: string;
+export function streamChat(opts: Pick<ReturnType<typeof providerOptions>, "baseUrl" | "model" | "temperature">
+  & Partial<Pick<ReturnType<typeof providerOptions>, "codex" | "apiFallback">> & {
   system: string;
   user: string;
-  temperature: number;
-  /** Çok turlu sohbet için önceki mesajlar (system ile son user arasına girer). */
   history?: { role: "user" | "assistant"; content: string }[];
   onText?: (full: string) => void;
+  onSearch?: (item: string) => void;
 }): StreamHandle {
   const requestId = crypto.randomUUID();
   let cancelled = false;
-  let unlisten: (() => void) | null = null;
-  let rejectFn: (e: Error) => void = () => {};
+  let unlisten: (() => void) | undefined;
+  let rejectDone: (error: Error) => void = () => {};
 
-  const done = new Promise<string>(async (resolve, reject) => {
-    rejectFn = reject;
+  const done = new Promise<string>((resolve, reject) => {
+    rejectDone = reject;
     let full = "";
-    unlisten = await listen<{ kind: string; text: string }>(`ai://${requestId}`, (e) => {
-      const { kind, text } = e.payload;
+    listen<{ kind: string; text: string }>(`ai://${requestId}`, ({ payload: { kind, text } }) => {
+      if (cancelled) return;
       if (kind === "delta") {
         full += text;
         opts.onText?.(full);
-      } else if (kind === "done") {
+      } else if (kind === "search") {
+        opts.onSearch?.(text);
+      } else if (kind === "fallback") {
+        window.dispatchEvent(new CustomEvent("sa-ai-fallback", { detail: text }));
+      } else if (kind === "done" || kind === "error") {
         unlisten?.();
-        resolve(full);
-      } else if (kind === "error") {
-        unlisten?.();
-        reject(new Error(text));
+        if (kind === "done") resolve(full);
+        else reject(new Error(text));
       }
-    });
-    if (cancelled) return;
-    try {
+    }).then(async (off) => {
+      unlisten = off;
+      if (cancelled) return off();
       await invoke("ai_stream", {
-        requestId,
-        baseUrl: opts.baseUrl,
-        model: opts.model,
-        system: opts.system,
-        user: opts.user,
-        temperature: opts.temperature,
-        history: opts.history ?? null,
+        requestId, baseUrl: opts.baseUrl, model: opts.model, system: opts.system, user: opts.user,
+        temperature: opts.temperature, history: opts.history ?? null, codex: opts.codex ?? null,
+        apiFallback: opts.apiFallback ?? false,
       });
-    } catch (err) {
+      if (cancelled) await invoke("ai_cancel", { requestId });
+    }).catch((error) => {
       unlisten?.();
-      reject(new Error(String(err)));
-    }
+      reject(new Error(String(error)));
+    });
   });
 
   return {
     done,
     cancel: () => {
+      if (cancelled) return;
       cancelled = true;
       unlisten?.();
       invoke("ai_cancel", { requestId }).catch(() => {});
-      rejectFn(new CancelledError());
+      rejectDone(new CancelledError());
     },
   };
 }

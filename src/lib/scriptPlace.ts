@@ -1,3 +1,4 @@
+import { providerOptions } from "./aiProvider";
 import { streamChat } from "./api";
 import { fmtTime, newId, wordNumbers } from "./timed";
 import type { ImageMeta, Settings, TimedDoc, TimedItem } from "./types";
@@ -430,11 +431,9 @@ export async function refineWithAI(
     const group = groups[g];
     try {
       const text = await streamChat({
-        baseUrl: s.baseUrl,
-        model: s.model,
+        ...providerOptions(s, { temperature: 0 }),
         system: PLACE_PROMPT,
         user: buildPlaceRequest(group, tokens, spoken, meta),
-        temperature: 0,
       }).done;
       const got = parsePlaceReply(text, group.plans.length, spoken[group.from].n, spoken[group.to].n);
       group.plans.forEach((pl, i) => {

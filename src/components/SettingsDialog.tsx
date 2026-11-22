@@ -660,13 +660,26 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     }
   };
 
+  const [codexVersion, setCodexVersion] = useState("");
+  const [apiModels, setApiModels] = useState<string[]>([]);
+  const useCodex = s.aiProvider === "codex";
   const fetchModels = async () => {
     setBusy(true);
     setMsg(null);
     try {
-      const m = await api.listModels(s.baseUrl);
-      onModels(m);
-      setMsg({ text: `Bağlantı başarılı · ${m.length} model` });
+      if (useCodex) {
+        const info = await api.codexStatus(s.codexPath);
+        setCodexVersion(info.version);
+        onModels(info.models);
+        setMsg(info.authenticated
+          ? { text: `${info.version} · Oturum açık · ${info.models.length} katalog modeli` }
+          : { text: "Codex oturumu kapalı. Terminalde codex login çalıştırın.", err: true });
+      } else {
+        const m = await api.listModels(s.baseUrl);
+        setApiModels(m);
+        onModels(m);
+        setMsg({ text: `Bağlantı başarılı · ${m.length} model` });
+      }
     } catch (e) {
       setMsg({ text: String(e), err: true });
     } finally {
@@ -743,7 +756,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
 
   const localProvider = ["localhost", "127.0.0.1", "[::1]"].includes(hostOf(s.baseUrl).replace(/:\d+$/, ""));
   const needsKey = !hasKey && !localProvider;
-  const aiReady = !needsKey && !!s.model;
+  const aiReady = useCodex ? !!codexVersion && !msg?.err : !needsKey && !!s.model;
   const whisper = useSyncExternalStore(subscribeWhisper, whisperStatus);
   const speechReady = s.sttEngine === "local" ? !!whisper && modelInstalled(s.whisperModel) : hasGroqKey;
   const navState: Record<Section, "ok" | "warn" | null> = {
@@ -755,7 +768,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     look: null,
   };
   const navTitle: Record<Section, string> = {
-    ai: aiReady ? "Hazır" : needsKey ? "API anahtarı girilmedi" : "Model seçilmedi",
+    ai: aiReady ? "Hazır" : useCodex ? "Codex oturumunu denetle" : needsKey ? "API anahtarı girilmedi" : "Model seçilmedi",
     speech: s.sttEngine === "local" ? (speechReady ? "Yerel Whisper hazır" : "Yerel model indirilmedi") : hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
     voice: "",
     home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
@@ -769,10 +782,10 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
         <div className={"s-hero " + (aiReady ? "ok" : "warn")}>
           <div className="s-hero-dot" />
           <div className="s-hero-text">
-            <div className="s-hero-title">{aiReady ? "Yapay zekâ hazır" : needsKey ? "API anahtarı gerekli" : "Bir model seçin"}</div>
+            <div className="s-hero-title">{aiReady ? "Yapay zekâ hazır" : useCodex ? "Codex CLI" : needsKey ? "API anahtarı gerekli" : "Bir model seçin"}</div>
             <div className="s-hero-sub">
-              {hostOf(s.baseUrl)}
-              {s.model ? ` · ${s.model}` : ""}
+              {useCodex ? codexVersion || "ChatGPT oturumu" : hostOf(s.baseUrl)}
+              {useCodex ? ` · ${s.codexModel || "CLI varsayılanı"}` : s.model ? ` · ${s.model}` : ""}
               {models.length ? ` · ${models.length} model listelendi` : ""}
             </div>
           </div>
@@ -782,7 +795,36 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
         </div>
         <Status msg={msg} />
 
-        <Card title="Bağlantı" hint="OpenAI uyumlu herhangi bir sunucu kullanılabilir.">
+        <Card title="AI sağlayıcısı">
+          <Row label="Metin işleme sağlayıcısı">
+            <Segmented value={s.aiProvider} options={[{ v: "codex", label: "Codex CLI" }, { v: "api", label: "OpenAI uyumlu API" }]}
+              onChange={(aiProvider) => { setMsg(null); setCodexVersion(""); onModels([]); onChange({ aiProvider }); }} />
+          </Row>
+        </Card>
+
+        {useCodex && <Card title="Codex CLI" hint="Codex mevcut ChatGPT veya CLI oturumuyla çalışır.">
+          <Row label="Çalıştırılabilir dosya" wide>
+            <input className="input mono" value={s.codexPath} onChange={(e) => { setCodexVersion(""); onChange({ codexPath: e.target.value }); }} placeholder="codex" />
+          </Row>
+          <Row label="Metin modeli" desc="Boşsa Codex varsayılanı." wide>
+            <ModelPicker value={s.codexModel} models={models} onChange={(v) => onChange({ codexModel: v })} />
+          </Row>
+          <Row label="Açıklama modeli" wide>
+            <ModelPicker value={s.codexInsightModel} models={models} onChange={(v) => onChange({ codexInsightModel: v })} placeholder="(metin modeliyle aynı)" />
+          </Row>
+          <Row label="Muhakeme eforu">
+            <select className="input" value={s.codexEffort} onChange={(e) => onChange({ codexEffort: e.target.value })}>
+              {["", "low", "medium", "high", "xhigh", "max", "ultra"].map((v) => <option key={v} value={v}>{v || "Varsayılan"}</option>)}
+            </select>
+          </Row>
+          {range("codexTimeoutSec", "Zaman aşımı", 30, 1800, 30, (v) => `${v} sn`)}
+          <Row label="API’ye geçiş" desc="Codex CLI ya da oturum kullanılamazsa yapılandırılmış API sağlayıcısı kullanılır.">
+            <Segmented value={s.codexApiFallback ? "on" : "off"} options={[{ v: "off", label: "Kapalı" }, { v: "on", label: "Açık" }]}
+              onChange={(v) => onChange({ codexApiFallback: v === "on" })} />
+          </Row>
+        </Card>}
+
+        <Card title={useCodex ? "API yedeği" : "Bağlantı"} hint="OpenAI uyumlu herhangi bir sunucu kullanılabilir.">
           <Row label="Sağlayıcı" desc="Hızlı seçim; adres aşağıda düzenlenebilir." wide>
             <div className="s-chips">
               {PROVIDERS.map((p) => (
@@ -807,10 +849,10 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
 
         <Card title="Modeller">
           <Row label="Metin işleme" desc="Altyazıyı Türkçe anlatıma çeviren model." wide>
-            <ModelPicker value={s.model} models={models} onChange={(v) => onChange({ model: v })} />
+            <ModelPicker value={s.model} models={useCodex ? apiModels : models} onChange={(v) => onChange({ model: v })} />
           </Row>
           <Row label="Açıklama" desc="Seçili ifadeyi açıklar; boşsa metin işleme modeli kullanılır." wide>
-            <ModelPicker value={s.insightModel} models={models} onChange={(v) => onChange({ insightModel: v })} placeholder="(metin işleme modeliyle aynı)" />
+            <ModelPicker value={s.insightModel} models={useCodex ? apiModels : models} onChange={(v) => onChange({ insightModel: v })} placeholder="(metin işleme modeliyle aynı)" />
           </Row>
         </Card>
 
