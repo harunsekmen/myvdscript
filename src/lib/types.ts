@@ -167,6 +167,29 @@ export interface Synthesis {
   status: "done" | "partial";
 }
 
+export interface PublishChapter {
+  title: string;
+  startSec: number;
+}
+
+export interface ShortDraft {
+  id: string;
+  title: string;
+  text: string;
+  hooks: string[];
+  createdAt: number;
+}
+
+export interface PublishMeta {
+  titles: string[];
+  description: string;
+  chapters: PublishChapter[];
+  tags: string[];
+  pinnedComment: string;
+  shorts: ShortDraft[];
+  updatedAt: number;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -181,6 +204,7 @@ export interface Project {
   takes?: VoiceTake[];
   imageMeta: Record<string, ImageMeta>;
   syntheses?: Synthesis[];
+  publish?: PublishMeta;
   /** Ana aşama (Settings.stages içindeki kimlik). */
   stage?: string;
   checklist?: CheckItem[];
@@ -266,6 +290,7 @@ export interface Settings {
   codexInsightModel: string;
   codexEffort: string;
   codexTimeoutSec: number;
+  publishWpm: number;
   codexApiFallback: boolean;
   styleEnabled: boolean;
   styleReferences: StyleReference[];

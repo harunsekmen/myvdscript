@@ -15,17 +15,18 @@ import { buildTimed, collectTimedPaths } from "../lib/timed";
 import { NOTE_MARK, applyMoves, hasScriptAtts, placeScriptItems, refineWithAI } from "../lib/scriptPlace";
 import { ScriptNote } from "./scriptNote";
 import { checkWords } from "../lib/wordCheck";
-import type { ImageMeta, Project, Settings, TimedDoc, VoiceTake } from "../lib/types";
+import type { ImageMeta, Project, PublishMeta, Settings, TimedDoc, VoiceTake } from "../lib/types";
 import { ImageChip, prepareImage } from "./imageChip";
 import { MarkdownEnter } from "./mdShortcuts";
 import { ImageViewer } from "./ImageViewer";
 import { ConfirmDialog } from "./Dialogs";
+import { PublishPane } from "./PublishPane";
 import { SpeakIcon } from "./SpeakIcon";
 import { TimedPane } from "./TimedPane";
 import { VoicePane } from "./VoicePane";
 import { fmtDur } from "../lib/voice";
 
-export type RightTab = "write" | "timed" | "voice";
+export type RightTab = "write" | "timed" | "voice" | "publish";
 
 interface Props {
   project: Project;
@@ -45,6 +46,8 @@ interface Props {
   registerInsert: (fn: (markdown: string) => boolean) => void;
   onCopy: (mode: CopyMode) => Promise<void> | void;
   onCount: (label: string) => void;
+  onPublish: (change: (current: PublishMeta) => PublishMeta) => void;
+  onPublishWpm: (value: number) => void;
 }
 
 /** Başlık, liste, alıntı, kod bloğu, kalın/italik ya da bağlantı içeren metin markdown sayılır. */
@@ -54,9 +57,10 @@ const looksLikeMarkdown = (t: string) =>
 const UNDO_WINDOW_MS = 30_000;
 const MEDIA_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac", "aac", "opus", "wma", "mpeg", "mpga", "mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "ts"];
 
-export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, registerInsert, onCopy, onCount }: Props) {
+export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings, onDoc, onTimed, onPatchTimed, onPatchTakes, onMeta, onToast, registerGetDoc, registerInsert, onCopy, onCount, onPublish, onPublishWpm }: Props) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   // Seçim balonu: dinle (kısa seçimlerde) ve AI notuna çevir/notu kaldır
+  const [publishSelection, setPublishSelection] = useState("");
   const [pick, setPick] = useState<{ text: string; x: number; y: number; speak: boolean; note: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sttPct, setSttPct] = useState<number | null>(null);
@@ -419,7 +423,8 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
   if (!editor) return null;
   const timedTab = tab === "timed" && !!project.timed;
   const voiceTab = tab === "voice";
-  const writeTab = !timedTab && !voiceTab;
+  const publishTab = tab === "publish";
+  const writeTab = !timedTab && !voiceTab && !publishTab;
   const clampX = (x: number) => Math.min(Math.max(x, 24), window.innerWidth - 24);
 
   return (
@@ -437,6 +442,9 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
             title="Senaryoyu kendi sesinle parça parça kaydet (Ctrl+Shift+M)"
           >
             Ses kayıtları{takes.length ? <span className="rtab-count">{takes.length}</span> : null}
+          </button>
+          <button role="tab" aria-selected={publishTab} className={"rtab" + (publishTab ? " on" : "")} onClick={() => onTab("publish")}>
+            Yayın
           </button>
           {project.timed && (
             <button role="tab" aria-selected={timedTab} className={"rtab" + (timedTab ? " on" : "")} onClick={() => onTab("timed")} title="Kelime kelime zamanlı, otomatik çevrilmiş metin">
@@ -465,7 +473,7 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
             ✦ AI kontrol
           </button>
         )}
-        {!voiceTab && <button
+        {(writeTab || timedTab) && <button
           className="btn small media-add"
           onClick={addMedia}
           disabled={!!busy}
@@ -473,7 +481,7 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
         >
           ＋ Ses / video
         </button>}
-        {!voiceTab && <CopyButton onCopy={onCopy} timed={timedTab} />}
+        {(writeTab || timedTab) && <CopyButton onCopy={onCopy} timed={timedTab} />}
       </div>
       {busy && (
         <div className="banner busy">
@@ -518,6 +526,16 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
           onToast={onToast}
         />
       )}
+      {publishTab && <PublishPane
+        project={project}
+        settings={settings}
+        getDoc={() => editor.getJSON()}
+        selection={publishSelection}
+        onClearSelection={() => setPublishSelection("")}
+        onChange={onPublish}
+        onWpm={onPublishWpm}
+        onToast={onToast}
+      />}
       <VoicePane
         project={project}
         visible={voiceTab}
@@ -548,6 +566,10 @@ export function RightPane({ project, tab, onTab, settings, sttOk, onOpenSettings
           >
             {pick.note ? "Notu kaldır" : "Nota çevir"}
           </button>
+          <button onClick={() => {
+            setPublishSelection(pick.text);
+            onTab("publish");
+          }}>Seçimden Shorts</button>
         </div>
       )}
       {openPath && (

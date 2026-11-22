@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   codexInsightModel: "",
   codexEffort: "",
   codexTimeoutSec: 300,
+  publishWpm: 160,
   codexApiFallback: true,
   styleEnabled: false,
   styleReferences: [],

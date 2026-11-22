@@ -18,6 +18,7 @@ import { useSplitLayout } from "./hooks/useSplitLayout";
 import { api, type ProjectPatch } from "./lib/api";
 import { createAutosaver } from "./lib/autosave";
 import { exportDoc, type CopyMode } from "./lib/copyExport";
+import { emptyPublish } from "./lib/publish";
 import { fontCss } from "./lib/fonts";
 import { migrateStages } from "./lib/settingsDefaults";
 import { DEFAULT_INSIGHT_PROMPT, DEFAULT_SYSTEM_PROMPT, isLegacyInsightPrompt, isLegacySystemPrompt } from "./lib/prompts";
@@ -27,7 +28,7 @@ import { refreshWhisper, subscribeWhisper, sttReady, whisperStatus } from "./lib
 import { appShortcutLabels } from "./lib/keys";
 import { keysClaimed } from "./lib/keyScope";
 import { disfluentWords } from "./lib/disfluency";
-import type { ChatMessage, ImageMeta, Insight, Settings, Synthesis, SynthesisCitation, TimedDoc, VoiceTake } from "./lib/types";
+import type { ChatMessage, ImageMeta, Insight, PublishMeta, Settings, Synthesis, SynthesisCitation, TimedDoc, VoiceTake } from "./lib/types";
 import { videoIdOf } from "./lib/youtube";
 import { DEFAULT_SETTINGS } from "./lib/settingsDefaults";
 
@@ -341,6 +342,9 @@ export default function App() {
   );
   const onSelectSource = useCallback((id: string) => mutate((p) => (p.activeSourceId === id ? p : { ...p, activeSourceId: id })), [mutate]);
   const onDoc = useCallback((doc: any) => mutate((p) => ({ ...p, editorDoc: doc }), false), [mutate]);
+  const onPublish = useCallback((change: (value: PublishMeta) => PublishMeta) => {
+    mutate((p) => ({ ...p, publish: { ...change(p.publish ?? emptyPublish()), updatedAt: Date.now() } }));
+  }, [mutate]);
   const onTimed = useCallback((doc: TimedDoc) => mutate((p) => ({ ...p, timed: doc })), [mutate]);
   // Arka planda gelen sonuçlar (AI önerileri) en güncel zamanlı metne uygulanır.
   const patchTimed = useCallback(
@@ -496,6 +500,8 @@ export default function App() {
               registerInsert={registerInsert}
               onCopy={copy}
               onCount={setWordCount}
+              onPublish={onPublish}
+              onPublishWpm={(publishWpm) => patchSettings({ publishWpm })}
             />
           </div>
         </main>

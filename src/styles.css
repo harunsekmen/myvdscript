@@ -1021,3 +1021,12 @@ button.vf-title:hover { color: var(--text); }
 .synthesis-citations { display: flex; flex-wrap: wrap; gap: 5px; }
 .synthesis-citations button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .synthesis-preview { white-space: pre-wrap; }
+
+.publish-scroll { overflow: auto; min-height: 0; padding: 14px 16px; display: grid; gap: 12px; }
+.publish-actions, .publish-field-head, .publish-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.publish-field-head label { flex: 1; }
+.publish-field { display: grid; gap: 5px; min-width: 0; }
+.publish-field textarea { width: 100%; resize: vertical; }
+.publish-wpm { display: grid; gap: 4px; }
+.publish-short { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.publish-short .input { min-width: 0; }
