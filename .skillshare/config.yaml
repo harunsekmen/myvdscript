@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/runkids/skillshare/main/schemas/project-config.schema.json
+
+targets:
+  - codex
+
+extras:
+  - name: codex-instructions
+    source: .skillshare/extras/codex-instructions
+    file: AGENTS.md
+    targets:
+      - path: .
+        mode: copy
+
+ignore:
+  - .DS_Store
+  - .git/
+  - __pycache__/
+
+audit:
+  block_threshold: CRITICAL
