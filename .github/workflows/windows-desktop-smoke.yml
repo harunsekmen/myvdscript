@@ -1,0 +1,26 @@
+name: Windows desktop smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/v0.2.0']
+    paths:
+      - '.github/workflows/windows-desktop-smoke.yml'
+      - '.github/scripts/windows-desktop-smoke.mjs'
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download draft Windows executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.2.0 --repo $env:GITHUB_REPOSITORY --pattern 'script-atolyesi_windows_x64.exe' --dir $env:RUNNER_TEMP
+      - name: Exercise the installed webview and data store
+        shell: pwsh
+        run: node .github/scripts/windows-desktop-smoke.mjs (Join-Path $env:RUNNER_TEMP 'script-atolyesi_windows_x64.exe')
