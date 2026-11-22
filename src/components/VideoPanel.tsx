@@ -106,6 +106,7 @@ interface Props {
 export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segments, chaptersTr, onChaptersTr, settings, onToast }: Props) {
   const id = videoIdOf(url);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [embedBase, setEmbedBase] = useState<string>();
   const [meta, setMeta] = useState<Meta | null>(id ? metaCache.get(id) ?? null : null);
   const [open, setOpen] = useState(false);
   const [rate, setRateState] = useState(1);
@@ -123,11 +124,18 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const hoverRef = useRef(false);
 
   useEffect(() => {
+    // macOS WebKit does not send an HTTP referrer from the packaged tauri:// page.
+    if (window.location.protocol === "tauri:") {
+      api.youtubeEmbedBase().then(setEmbedBase).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
     const f = frameRef.current;
     if (!f || !id) return;
     setRateState(1);
     return attachFrame(f, id);
-  }, [id]);
+  }, [id, embedBase]);
 
   useEffect(() => {
     if (!rateOpen) return;
@@ -310,7 +318,9 @@ export function VideoPanel({ url, title, marks, transcriptRaw, origLang, segment
   const cue = playing ? liveCue : "";
   const origTag = (origLang.split("-")[0] || "EN").toUpperCase().slice(0, 3);
   const origin = encodeURIComponent(window.location.origin);
-  const src = `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&cc_load_policy=3&playsinline=1&origin=${origin}`;
+  const src = embedBase
+    ? embedBase + encodeURIComponent(id)
+    : `https://www.youtube.com/embed/${id}?enablejsapi=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&fs=0&disablekb=1&cc_load_policy=3&playsinline=1&origin=${origin}`;
   const desc = meta?.description.trim() ?? "";
   const chapters = meta?.chapters ?? [];
   const curChapter = chapters.reduce((k, c, i) => (c.start <= time + 0.5 ? i : k), -1);

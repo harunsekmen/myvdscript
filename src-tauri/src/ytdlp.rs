@@ -1,5 +1,5 @@
 use crate::store;
-use std::{fs, path::PathBuf, process::Output, sync::OnceLock};
+use std::{fs, process::Output, sync::OnceLock};
 use tauri::{AppHandle, Emitter};
 
 /// Olay yayınlamak için uygulama tutamacı (setup'ta atanır).
@@ -13,9 +13,11 @@ pub fn status(msg: &str) {
 }
 
 // yt-dlp exe'nin içine gömülür; ilk kullanımda veri klasörüne açılır (tek dosyalık taşınabilir exe).
+#[cfg(windows)]
 static YTDLP: &[u8] = include_bytes!("../binaries/yt-dlp-x86_64-pc-windows-msvc.exe");
 
-fn ensure() -> Result<PathBuf, String> {
+#[cfg(windows)]
+fn executable() -> Result<std::path::PathBuf, String> {
     let dir = store::root().join("bin");
     let path = dir.join("yt-dlp.exe");
     let ok = fs::metadata(&path).map(|m| m.len() == YTDLP.len() as u64).unwrap_or(false);
@@ -24,6 +26,11 @@ fn ensure() -> Result<PathBuf, String> {
         store::write_atomic(&path, YTDLP).map_err(|e| format!("yt-dlp açılamadı: {e}"))?;
     }
     Ok(path)
+}
+
+#[cfg(not(windows))]
+fn executable() -> Result<std::path::PathBuf, String> {
+    Ok("yt-dlp".into())
 }
 
 /// Ayarlardaki "cookiesBrowser" değerini okur; yt-dlp'ye tarayıcı çerezlerini kullandırır.
@@ -41,8 +48,9 @@ fn cookie_args() -> Vec<String> {
 }
 
 fn command(args: Vec<String>) -> Result<tokio::process::Command, String> {
-    let path = ensure()?;
-    let mut cmd = tokio::process::Command::new(path);
+    let mut cmd = tokio::process::Command::new(executable()?);
+    #[cfg(target_os = "macos")]
+    crate::mac_tools::set_tool_path(&mut cmd);
     cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
     cmd.args(["--encoding", "utf-8"]);
     cmd.args(cookie_args());
@@ -52,8 +60,16 @@ fn command(args: Vec<String>) -> Result<tokio::process::Command, String> {
     Ok(cmd)
 }
 
+fn launch_error(err: std::io::Error) -> String {
+    #[cfg(target_os = "macos")]
+    if err.kind() == std::io::ErrorKind::NotFound {
+        return "yt-dlp bulunamadı. Homebrew ile yt-dlp ve Deno kurup yeniden deneyin.".into();
+    }
+    format!("yt-dlp çalıştırılamadı: {err}")
+}
+
 pub async fn run(args: Vec<String>) -> Result<Output, String> {
-    command(args)?.output().await.map_err(|e| format!("yt-dlp çalıştırılamadı: {e}"))
+    command(args)?.output().await.map_err(launch_error)
 }
 
 /// yt-dlp'yi çalıştırır ve stdout'un her satırını geldiği anda `on_line`'a verir.
@@ -63,7 +79,7 @@ pub async fn run_lines(args: Vec<String>, mut on_line: impl FnMut(&str)) -> Resu
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
     let mut cmd = command(args)?;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    let mut child = cmd.spawn().map_err(|e| format!("yt-dlp çalıştırılamadı: {e}"))?;
+    let mut child = cmd.spawn().map_err(launch_error)?;
     let stdout = child.stdout.take().ok_or("yt-dlp çıktısı alınamadı")?;
     let mut stderr = child.stderr.take().ok_or("yt-dlp çıktısı alınamadı")?;
     let err_task = tokio::spawn(async move {

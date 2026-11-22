@@ -21,11 +21,20 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util"] }
-keyring = { version = "3", features = ["windows-native"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 regex = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+tiny_http = "0.12"
+
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
+keyring = "3"
 
 [profile.release]
 opt-level = "s"

@@ -1,7 +1,11 @@
 mod commands;
 mod http;
+#[cfg(target_os = "macos")]
+mod mac_tools;
 mod store;
 mod ytdlp;
+#[cfg(target_os = "macos")]
+mod youtube_embed;
 
 use commands::{ai, export, external, images, projects, settings, stt, transcript, tts, videos, voice, whisper};
 use tauri::Manager;
@@ -24,6 +28,8 @@ pub fn run() {
             let root = store::pick_root(appdata);
             store::migrate_from_exe_dir(&root);
             store::init(root);
+            #[cfg(target_os = "macos")]
+            app.manage(youtube_embed::EmbedAddress::start()?);
             // Ana pencere koddan kurulur: gömülü YouTube videosunun açmak istediği yeni pencereler
             // (başlık, logo, "YouTube'da izle") uygulama içinde engellenmek yerine tarayıcıda açılır.
             let conf = app.config().app.windows.first().cloned().ok_or("pencere ayarı yok")?;
@@ -81,6 +87,8 @@ pub fn run() {
             tts::tts,
             transcript::video_meta,
             transcript::video_stream_url,
+            #[cfg(target_os = "macos")]
+            youtube_embed::youtube_embed_base,
             external::open_external,
             export::save_text_file,
             voice::save_voice_take,

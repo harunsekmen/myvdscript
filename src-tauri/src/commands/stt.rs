@@ -48,6 +48,8 @@ async fn ffmpeg_convert(src: &Path, wav: bool) -> Result<std::path::PathBuf, Str
     let out = temp_path(if wav { "wav" } else { "mp3" });
     let codec: &[&str] = if wav { &["-c:a", "pcm_s16le", "-f", "wav"] } else { &["-b:a", "48k", "-f", "mp3"] };
     let mut cmd = tokio::process::Command::new(ffmpeg_path());
+    #[cfg(target_os = "macos")]
+    crate::mac_tools::set_tool_path(&mut cmd);
     cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(src)
         .args(["-vn", "-map", "0:a:0", "-ac", "1", "-ar", "16000"])
@@ -57,7 +59,7 @@ async fn ffmpeg_convert(src: &Path, wav: bool) -> Result<std::path::PathBuf, Str
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let res = cmd.output().await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg bulunamadı. Videoları sese çevirmek için ffmpeg kurun (ör. `winget install ffmpeg`) ve uygulamayı yeniden başlatın".to_string()
+            "ffmpeg bulunamadı. Videoları sese çevirmek için ffmpeg kurun ve uygulamayı yeniden başlatın".to_string()
         } else {
             format!("ffmpeg çalıştırılamadı: {e}")
         }

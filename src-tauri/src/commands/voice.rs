@@ -166,6 +166,8 @@ pub async fn export_voice_takes(project_id: String, files: Vec<String>, gap_ms: 
     filter.push_str(&format!("concat=n={n}:v=0:a=1[out]"));
 
     let mut cmd = tokio::process::Command::new(ffmpeg_path());
+    #[cfg(target_os = "macos")]
+    crate::mac_tools::set_tool_path(&mut cmd);
     cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
     for p in &inputs {
         cmd.arg("-i").arg(p);

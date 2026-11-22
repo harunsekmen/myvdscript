@@ -1,7 +1,6 @@
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
 use crate::ytdlp;
 
 #[derive(Serialize)]
@@ -214,6 +213,7 @@ pub async fn fetch_transcript(url: String, lang: String, auto: bool) -> Result<T
     let dir = std::env::temp_dir().join(format!("sa-sub-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out_tpl = dir.join("sub").to_string_lossy().to_string();
+    let track = format!("^{}$", regex::escape(&lang));
     let out = run_with_retry(|| {
         vec![
             "--skip-download".into(),
@@ -225,7 +225,7 @@ pub async fn fetch_transcript(url: String, lang: String, auto: bool) -> Result<T
             "3".into(),
             if auto { "--write-auto-subs".into() } else { "--write-subs".into() },
             "--sub-langs".into(),
-            lang.clone(),
+            track.clone(),
             "--sub-format".into(),
             "json3/vtt".into(),
             "-o".into(),
@@ -233,7 +233,14 @@ pub async fn fetch_transcript(url: String, lang: String, auto: bool) -> Result<T
             url.clone(),
         ]
     })
-    .await?;
+    .await;
+    let out = match out {
+        Ok(out) => out,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(error);
+        }
+    };
 
     let mut text = None;
     if let Ok(rd) = std::fs::read_dir(&dir) {
@@ -265,111 +272,8 @@ pub async fn fetch_transcript(url: String, lang: String, auto: bool) -> Result<T
     Ok(Transcript { lang, auto, text, title: None })
 }
 
-/// `grab_subs` çıktısından ayrıştırılan üst bilgi.
-#[derive(Default, Debug, Clone)]
-struct SubMeta {
-    title: Option<String>,
-    /// Videonun özgün dili (yt-dlp `language`; bilinmiyorsa None).
-    orig: Option<String>,
-    /// İndirilen izler: dil → otomatik mi.
-    auto: HashMap<String, bool>,
-    /// Videoda elle yazılmış herhangi bir altyazı var mı.
-    has_manual: bool,
-}
-
 fn base_lang(l: &str) -> String {
     l.split(['-', '_']).next().unwrap_or(l).to_lowercase()
-}
-
-/// yt-dlp `--print` çıktısındaki `SA_*:` önekli satırları ayrıştırır.
-fn parse_sub_meta(stdout: &str) -> SubMeta {
-    let mut m = SubMeta::default();
-    for line in stdout.lines().map(str::trim) {
-        if let Some(t) = line.strip_prefix("SA_TITLE:") {
-            if !t.is_empty() && t != "NA" {
-                m.title = Some(t.to_string());
-            }
-        } else if let Some(l) = line.strip_prefix("SA_LANG:") {
-            if !l.is_empty() && l != "NA" && l != "None" {
-                m.orig = Some(base_lang(l));
-            }
-        } else if let Some(j) = line.strip_prefix("SA_REQ:") {
-            if let Ok(Value::Object(o)) = serde_json::from_str::<Value>(j) {
-                for (lang, f) in o {
-                    // Otomatik (ASR) izlerin adresinde `caps=asr` bulunur; `-orig` her zaman otomatiktir.
-                    let url = f["url"].as_str().unwrap_or("");
-                    let auto = lang.ends_with("-orig") || url.contains("caps=asr") || url.contains("kind=asr");
-                    m.auto.insert(lang, auto);
-                }
-            }
-        } else if let Some(j) = line.strip_prefix("SA_MANUAL:") {
-            m.has_manual = matches!(serde_json::from_str::<Value>(j), Ok(Value::Array(a)) if !a.is_empty());
-        }
-    }
-    m
-}
-
-/// Altyazıları tek yt-dlp çağrısıyla indirir (ek liste isteği yok).
-/// `--print` başlık/dil bilgisini stdout'a yazar; indirme yine yapılır (`--no-simulate`).
-async fn grab_subs(url: &str, dir: &std::path::Path, langs: &str) -> Result<std::process::Output, String> {
-    let out_tpl = dir.join("sub").to_string_lossy().to_string();
-    let (url, langs) = (url.to_string(), langs.to_string());
-    run_with_retry(move || {
-        let mut a: Vec<String> = vec!["--skip-download".into(), "--no-warnings".into(), "--no-playlist".into()];
-        for t in [
-            "SA_TITLE:%(title)s",
-            "SA_LANG:%(language)s",
-            "SA_REQ:%(requested_subtitles|{})j",
-            "SA_MANUAL:%(subtitles.:.name)j",
-        ] {
-            a.push("--print".into());
-            a.push(t.into());
-        }
-        for x in [
-            "--no-simulate",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sleep-requests",
-            "2",
-            "--sleep-subtitles",
-            "3",
-            "--sub-langs",
-            &langs,
-            "--sub-format",
-            "json3/vtt",
-            "-o",
-            &out_tpl,
-            &url,
-        ] {
-            a.push(x.into());
-        }
-        a
-    })
-    .await
-}
-
-/// İndirilen `sub.<dil>.<ext>` dosyalarını okur; (dil, zamanlı metin) listesi döner.
-fn read_sub_files(dir: &std::path::Path) -> Vec<(String, String)> {
-    let mut out = vec![];
-    let Ok(rd) = std::fs::read_dir(dir) else { return out };
-    for e in rd.flatten() {
-        let p = e.path();
-        let name = e.file_name().to_string_lossy().to_string();
-        let parts: Vec<&str> = name.split('.').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&p) else { continue };
-        let cues = match parts[parts.len() - 1] {
-            "json3" => json3_cues(&content).ok(),
-            "vtt" => Some(vtt_cues(&content)),
-            _ => None,
-        };
-        if let Some(c) = cues.filter(|c| !c.is_empty()) {
-            out.push((parts[1].to_string(), timed_text(&c)));
-        }
-    }
-    out
 }
 
 fn is_en_tr(base: &str) -> bool {
@@ -400,66 +304,20 @@ fn lang_rank(lang: &str, auto: bool, orig: Option<&str>) -> (u8, u8) {
     (main, sub)
 }
 
-/// En iyi izi seçer: (dil, metin, otomatik mi).
-fn pick_lang(files: Vec<(String, String)>, meta: &SubMeta) -> Option<(String, String, bool)> {
-    // Özgün dil bilinmiyorsa `<dil>-orig` izinden çıkarılır.
-    let orig = meta
-        .orig
-        .clone()
-        .or_else(|| files.iter().find(|(l, _)| l.ends_with("-orig")).map(|(l, _)| base_lang(l)));
-    files
-        .into_iter()
-        .map(|(l, t)| {
-            let auto = meta.auto.get(&l).copied().unwrap_or_else(|| l.ends_with("-orig"));
-            (l, t, auto)
-        })
-        .min_by_key(|(l, _, auto)| lang_rank(l, *auto, orig.as_deref()))
-}
-
-async fn fetch_default_inner(url: &str, dir: &std::path::Path) -> Result<Transcript, String> {
-    // Tek istek: İngilizce/Türkçe ve özgün dildeki otomatik iz (`*-orig`); elle yazılmış ya da otomatik.
-    let out = grab_subs(url, dir, "en.*,tr.*,.*-orig").await?;
-    let mut meta = parse_sub_meta(&String::from_utf8_lossy(&out.stdout));
-    let mut files = read_sub_files(dir);
-
-    // Özgün dil en/tr değilse ve videoda elle yazılmış altyazı varsa, özgün dildekini ayrıca dene.
-    if let Some(o) = meta.orig.clone() {
-        let have_manual_orig = files
-            .iter()
-            .any(|(l, _)| base_lang(l) == o && !l.ends_with("-orig") && !meta.auto.get(l).copied().unwrap_or(false));
-        if !is_en_tr(&o) && meta.has_manual && !have_manual_orig {
-            if let Ok(o2) = grab_subs(url, dir, &format!("{o},{o}-.*")).await {
-                let m2 = parse_sub_meta(&String::from_utf8_lossy(&o2.stdout));
-                meta.auto.extend(m2.auto);
-                files = read_sub_files(dir);
-            }
-        }
-    }
-
-    if files.is_empty() {
-        // İngilizce/Türkçe yoksa videodaki herhangi bir altyazı (ek istek yalnızca bu durumda).
-        let out2 = grab_subs(url, dir, "all").await?;
-        let m2 = parse_sub_meta(&String::from_utf8_lossy(&out2.stdout));
-        meta.auto.extend(m2.auto);
-        meta.title = meta.title.or(m2.title);
-        meta.orig = meta.orig.or(m2.orig);
-        files = read_sub_files(dir);
-        if files.is_empty() {
-            let err = if is_rate_limited(&out2) || is_rate_limited(&out) {
-                RATE_LIMIT_MSG.to_string()
-            } else {
-                let last = String::from_utf8_lossy(&out2.stderr).lines().last().unwrap_or("").to_string();
-                if last.is_empty() {
-                    "Bu videoda kullanılabilir altyazı bulunamadı".to_string()
-                } else {
-                    format!("Altyazı indirilemedi: {last}")
-                }
-            };
-            return Err(err);
-        }
-    }
-    let (lang, text, auto) = pick_lang(files, &meta).ok_or("Altyazı okunamadı")?;
-    Ok(Transcript { lang, auto, text, title: meta.title })
+/// Yalnızca metin alınabilecek izleri sıralar. Her indirme tek bir izi ister.
+fn ranked_subtitles(info: &Value) -> Vec<SubOption> {
+    let mut options = sub_options(&info["subtitles"], false);
+    options.extend(sub_options(&info["automatic_captions"], true));
+    let original = info["language"].as_str().map(base_lang).or_else(|| {
+        let mut originals = options.iter().filter(|opt| opt.auto && opt.lang.ends_with("-orig"));
+        let first = originals.next()?;
+        // Çok dilli dub içeren videolarda birden fazla "-orig" izi bulunabilir.
+        originals.next().is_none().then(|| base_lang(&first.lang))
+    });
+    options.sort_by_key(|opt| {
+        (lang_rank(&opt.lang, opt.auto, original.as_deref()), !opt.lang.ends_with("-orig"))
+    });
+    options
 }
 
 #[derive(Serialize)]
@@ -527,11 +385,20 @@ pub async fn video_stream_url(url: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn fetch_default_transcript(url: String) -> Result<Transcript, String> {
     check_url(&url)?;
-    let dir = std::env::temp_dir().join(format!("sa-sub-{}", uuid::Uuid::new_v4().simple()));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let res = fetch_default_inner(&url, &dir).await;
-    let _ = std::fs::remove_dir_all(&dir);
-    res
+    let info = video_info(&url).await?;
+    let title = info["title"].as_str().map(str::to_owned);
+    let mut last_error = "Bu videoda kullanılabilir altyazı bulunamadı".to_string();
+    for option in ranked_subtitles(&info) {
+        match fetch_transcript(url.clone(), option.lang, option.auto).await {
+            Ok(mut transcript) => {
+                transcript.title = title;
+                return Ok(transcript);
+            }
+            Err(error) if error == RATE_LIMIT_MSG => return Err(error),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
 }
 
 #[cfg(test)]
@@ -585,78 +452,34 @@ mod tests {
         assert!(sub_options(&Value::Null, true).is_empty());
     }
 
-    fn f(l: &str) -> (String, String) {
-        (l.to_string(), format!("metin-{l}"))
-    }
-
-    fn meta(orig: Option<&str>, auto: &[&str]) -> SubMeta {
-        SubMeta {
-            orig: orig.map(String::from),
-            auto: auto.iter().map(|l| (l.to_string(), true)).collect(),
-            ..Default::default()
-        }
+    #[test]
+    fn default_prefers_manual_original_then_original_asr() {
+        let info = serde_json::json!({
+            "language": "en-US",
+            "subtitles": {"en": [{}], "tr": [{}]},
+            "automatic_captions": {"en": [{}], "en-orig": [{}], "de-orig": [{}], "tr": [{}]}
+        });
+        let options = ranked_subtitles(&info);
+        assert_eq!((&*options[0].lang, options[0].auto), ("en", false));
+        assert_eq!((&*options[1].lang, options[1].auto), ("en-orig", true));
+        assert_eq!((&*options[2].lang, options[2].auto), ("en", true));
     }
 
     #[test]
-    fn pick_prefers_orig_over_translated_english() {
-        // Almanca video: makine çevirisi "en" yerine "de-orig" seçilmeli.
-        let m = meta(Some("de"), &["en", "tr", "de-orig"]);
-        let (l, _, auto) = pick_lang(vec![f("en"), f("tr"), f("de-orig")], &m).unwrap();
-        assert_eq!(l, "de-orig");
-        assert!(auto);
+    fn uses_unique_original_track_when_language_metadata_is_missing() {
+        let info = serde_json::json!({
+            "subtitles": {"tr": [{}]},
+            "automatic_captions": {"en": [{}], "de-orig": [{}]}
+        });
+        assert_eq!(ranked_subtitles(&info)[0].lang, "de-orig");
     }
 
     #[test]
-    fn pick_manual_orig_beats_orig_asr() {
-        let m = meta(Some("de"), &["en", "de-orig"]);
-        let (l, _, auto) = pick_lang(vec![f("en"), f("de-orig"), f("de")], &m).unwrap();
-        assert_eq!(l, "de");
-        assert!(!auto);
-    }
-
-    #[test]
-    fn pick_orig_unknown_derives_from_orig_track() {
-        let m = meta(None, &["en", "de-orig"]);
-        let (l, _, _) = pick_lang(vec![f("en"), f("de-orig")], &m).unwrap();
-        assert_eq!(l, "de-orig");
-    }
-
-    #[test]
-    fn pick_manual_en_tr_before_translated() {
-        // Özgün dil bilinmiyor, -orig yok: elle yazılmış tr, otomatik en'den iyi.
-        let m = meta(None, &["en"]);
-        let (l, _, auto) = pick_lang(vec![f("en"), f("tr")], &m).unwrap();
-        assert_eq!(l, "tr");
-        assert!(!auto);
-    }
-
-    #[test]
-    fn pick_english_video() {
-        let m = meta(Some("en"), &["en-orig"]);
-        let (l, _, auto) = pick_lang(vec![f("tr"), f("en"), f("en-orig")], &m).unwrap();
-        assert_eq!(l, "en");
-        assert!(!auto);
-        assert_eq!(pick_lang(vec![f("tr"), f("en-orig")], &m).unwrap().0, "en-orig");
-    }
-
-    #[test]
-    fn pick_other_languages_last() {
-        let m = meta(Some("de"), &[]);
-        assert_eq!(pick_lang(vec![f("fr"), f("tr")], &m).unwrap().0, "tr");
-        assert!(pick_lang(vec![], &m).is_none());
-    }
-
-    #[test]
-    fn parse_meta_lines() {
-        let out = "SA_TITLE:Bir Video\nSA_LANG:de-DE\nSA_REQ:{\"en\":{\"url\":\"https://x/?caps=asr&tlang=en\"},\"de\":{\"url\":\"https://x/?lang=de\"},\"de-orig\":{\"url\":\"u\"}}\nSA_MANUAL:[\"Deutsch\"]\n";
-        let m = parse_sub_meta(out);
-        assert_eq!(m.title.as_deref(), Some("Bir Video"));
-        assert_eq!(m.orig.as_deref(), Some("de"));
-        assert_eq!(m.auto.get("en"), Some(&true));
-        assert_eq!(m.auto.get("de"), Some(&false));
-        assert_eq!(m.auto.get("de-orig"), Some(&true));
-        assert!(m.has_manual);
-        let m = parse_sub_meta("SA_TITLE:NA\nSA_LANG:NA\nSA_MANUAL:[]\n");
-        assert!(m.title.is_none() && m.orig.is_none() && !m.has_manual);
+    fn prefers_manual_fallback_when_several_dubs_are_marked_original() {
+        let info = serde_json::json!({
+            "subtitles": {"tr": [{}]},
+            "automatic_captions": {"en-orig": [{}], "de-orig": [{}]}
+        });
+        assert_eq!(ranked_subtitles(&info)[0].lang, "tr");
     }
 }

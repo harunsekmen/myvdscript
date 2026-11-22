@@ -741,7 +741,9 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     );
   };
 
-  const aiReady = hasKey && !!s.model;
+  const localProvider = ["localhost", "127.0.0.1", "[::1]"].includes(hostOf(s.baseUrl).replace(/:\d+$/, ""));
+  const needsKey = !hasKey && !localProvider;
+  const aiReady = !needsKey && !!s.model;
   const whisper = useSyncExternalStore(subscribeWhisper, whisperStatus);
   const speechReady = s.sttEngine === "local" ? !!whisper && modelInstalled(s.whisperModel) : hasGroqKey;
   const navState: Record<Section, "ok" | "warn" | null> = {
@@ -753,7 +755,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     look: null,
   };
   const navTitle: Record<Section, string> = {
-    ai: aiReady ? "Hazır" : !hasKey ? "API anahtarı girilmedi" : "Model seçilmedi",
+    ai: aiReady ? "Hazır" : needsKey ? "API anahtarı girilmedi" : "Model seçilmedi",
     speech: s.sttEngine === "local" ? (speechReady ? "Yerel Whisper hazır" : "Yerel model indirilmedi") : hasGroqKey ? "Groq anahtarı kayıtlı" : "Groq anahtarı yok",
     voice: "",
     home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
@@ -767,7 +769,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
         <div className={"s-hero " + (aiReady ? "ok" : "warn")}>
           <div className="s-hero-dot" />
           <div className="s-hero-text">
-            <div className="s-hero-title">{aiReady ? "Yapay zekâ hazır" : !hasKey ? "API anahtarı gerekli" : "Bir model seçin"}</div>
+            <div className="s-hero-title">{aiReady ? "Yapay zekâ hazır" : needsKey ? "API anahtarı gerekli" : "Bir model seçin"}</div>
             <div className="s-hero-sub">
               {hostOf(s.baseUrl)}
               {s.model ? ` · ${s.model}` : ""}
@@ -795,7 +797,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
           </Row>
           <Row
             label="API anahtarı"
-            desc="Windows Kimlik Bilgisi Yöneticisi'nde saklanır; yerel sunucularda gerekmeyebilir."
+            desc="Sistemin güvenli anahtar deposunda saklanır; yerel sunucularda gerekmeyebilir."
             aside={hasKey && <span className="s-pill ok">kayıtlı</span>}
             wide
           >
@@ -920,7 +922,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
               onChange={(v) => onChange({ statsSource: v })}
             />
           </Row>
-          <Row label="YouTube API anahtarı" desc="Google Cloud'da YouTube Data API v3'ü etkinleştirip anahtar oluşturun. Windows Kimlik Bilgisi Yöneticisi'nde saklanır." aside={hasYoutubeKey && <span className="s-pill ok">kayıtlı</span>} wide>
+          <Row label="YouTube API anahtarı" desc="Google Cloud'da YouTube Data API v3'ü etkinleştirip anahtar oluşturun. Sistemin güvenli anahtar deposunda saklanır." aside={hasYoutubeKey && <span className="s-pill ok">kayıtlı</span>} wide>
             <KeyInput saved={hasYoutubeKey} placeholder="AIza…" onSave={saveYoutubeKey} />
             <div className="row" style={{ marginTop: 8 }}>
               <button className="btn small" disabled={!hasYoutubeKey || ytBusy} onClick={testYoutubeKey}>

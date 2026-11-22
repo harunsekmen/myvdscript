@@ -100,6 +100,7 @@ export const api = {
   tts: (text: string) => invoke<{ lang: string; audio: string }>("tts", { text }),
   videoMeta: (url: string) => invoke<{ title: string; description: string; channel: string; chapters: { title: string; start: number }[] }>("video_meta", { url }),
   videoStreamUrl: (url: string) => invoke<string>("video_stream_url", { url }),
+  youtubeEmbedBase: () => invoke<string>("youtube_embed_base"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   saveTextFile: (path: string, contents: string) => invoke<void>("save_text_file", { path, contents }),
   patchProject: (id: string, patch: ProjectPatch) => invoke<number>("patch_project", { id, patch }),
