@@ -188,14 +188,30 @@ export function useProjectStore({ patchSettings, lifecycle }: Opts) {
 
   const clearAll = useCallback(async () => {
     lifecycle.current.cancel();
-    saver.cancel();
     await chain.current;
-    await api.clearAll();
+    await saver.flush();
+    if (saver.lastError()) throw new Error(saver.lastError()!);
+    const archive = await api.clearAll();
     show(null);
     setProjects([]);
     lifecycle.current.reset();
     patchSettings({ lastProjectId: "" });
+    return archive;
   }, [lifecycle, saver, patchSettings]);
 
-  return { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, rename, deleteById, editProject, clearAll };
+  const restoreProject = useCallback((id: string, date: string) => serial(async () => {
+    const open = projectRef.current?.id === id;
+    lifecycle.current.cancel(id);
+    await saver.flush();
+    if (open && saver.lastError()) throw new Error(saver.lastError()!);
+    await api.restoreBackup(id, date);
+    if (open) {
+      show(withSchema(await api.loadProject(id)));
+      lifecycle.current.reset();
+    }
+    await refreshProjects();
+    return open;
+  }), [serial, lifecycle, saver, refreshProjects]);
+
+  return { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, rename, deleteById, editProject, clearAll, restoreProject };
 }

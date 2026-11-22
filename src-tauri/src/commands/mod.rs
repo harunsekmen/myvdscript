@@ -11,3 +11,6 @@ pub mod transcript;
 pub mod videos;
 pub mod voice;
 pub mod whisper;
+pub mod backups;
+pub mod diagnostics;
+pub mod updates;

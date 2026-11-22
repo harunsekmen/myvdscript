@@ -5,6 +5,7 @@ use std::{fs, path::PathBuf};
 
 #[tauri::command]
 pub fn save_image(project_id: String, data_base64: String, ext: String) -> Result<Value, String> {
+    let _guard = store::lock_data()?;
     let ext = ext.trim_start_matches('.').to_ascii_lowercase();
     let ext = match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => ext,
@@ -47,6 +48,7 @@ pub fn read_image(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn delete_image(path: String) -> Result<(), String> {
+    let _guard = store::lock_data()?;
     let Ok(p) = store::ensure_in_projects(&PathBuf::from(&path)) else { return Ok(()) };
     if p.is_file() {
         fs::remove_file(p).map_err(|e| e.to_string())?;

@@ -67,6 +67,7 @@ fn raw_body(req: &Request<'_>) -> Result<Vec<u8>, String> {
 /// Dönüş: { file }
 #[tauri::command]
 pub fn save_voice_take(request: Request<'_>) -> Result<Value, String> {
+    let _guard = store::lock_data()?;
     let project = header(&request, "x-project").ok_or("Proje kimliği eksik")?.to_string();
     let ext = match header(&request, "x-ext").unwrap_or("webm") {
         e @ ("webm" | "ogg" | "wav" | "mp4" | "m4a") => e.to_string(),
@@ -97,6 +98,7 @@ pub fn read_voice_take(project_id: String, file: String) -> Result<Response, Str
 
 #[tauri::command]
 pub fn delete_voice_take(project_id: String, file: String) -> Result<(), String> {
+    let _guard = store::lock_data()?;
     let p = take_path(&project_id, &file)?;
     if p.is_file() {
         fs::remove_file(p).map_err(|e| e.to_string())?;
@@ -107,6 +109,7 @@ pub fn delete_voice_take(project_id: String, file: String) -> Result<(), String>
 /// Projenin `voice/` klasöründe, listede olmayan (silinmiş/yeniden kaydedilmiş) dosyaları temizler.
 #[tauri::command]
 pub fn prune_voice_takes(project_id: String, keep: Vec<String>) -> Result<u32, String> {
+    let _guard = store::lock_data()?;
     let dir = voice_dir(&project_id)?;
     let Ok(rd) = fs::read_dir(&dir) else { return Ok(0) };
     let mut n = 0;

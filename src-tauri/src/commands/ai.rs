@@ -6,7 +6,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::settings::api_key;
-use super::codex::{self, CodexOptions};
+use super::{codex::{self, CodexOptions}, diagnostics::AiTrace};
 
 /// Akış sırasında bu süre boyunca hiç veri gelmezse istek başarısız sayılır.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -98,22 +98,41 @@ pub fn ai_stream(
     let mut runs = state.0.lock().unwrap();
     let handle = tauri::async_runtime::spawn(async move {
         let emit = |kind, text| { let _ = app.emit(&event, AiEvent { kind, text }); };
+        let chars = messages.iter().filter_map(|m| m["content"].as_str()).map(|s| s.chars().count()).sum();
+        let run_api = |messages| {
+            let trace = AiTrace::new("api", &model, chars);
+            let app = &app;
+            let event = &event;
+            let base_url = &base_url;
+            let model = &model;
+            async move {
+                let result = run_stream(app, event, base_url, model, messages, temperature).await;
+                trace.finish(if result.is_ok() { "ok" } else { "request_error" }, None);
+                result
+            }
+        };
         let result = if let Some(options) = codex {
+            let trace = AiTrace::new("codex", &options.model, chars);
             match codex::run(&options, &messages, |item| emit("search", item)).await {
                 Ok(answer) => {
+                    trace.finish("ok", Some(0));
                     emit("delta", answer);
                     Ok(())
                 }
                 Err(error) if error.unavailable && api_fallback.unwrap_or(false) && !options.web
                     && !model.trim().is_empty() && !base_url.trim().is_empty() =>
                 {
+                    trace.finish("api_fallback", error.exit);
                     emit("fallback", "Codex kullanılamadı. Yapılandırılmış API ile devam ediliyor.".into());
-                    run_stream(&app, &event, &base_url, &model, messages, temperature).await
+                    run_api(messages).await
                 }
-                Err(error) => Err(error.message),
+                Err(error) => {
+                    trace.finish(if error.unavailable { "unavailable" } else { "request_error" }, error.exit);
+                    Err(error.message)
+                },
             }
         } else {
-            run_stream(&app, &event, &base_url, &model, messages, temperature).await
+            run_api(messages).await
         };
         match result {
             Ok(()) => {

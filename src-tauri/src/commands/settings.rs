@@ -53,8 +53,11 @@ pub fn load_settings() -> Value {
 
 #[tauri::command]
 pub fn save_settings(settings: Value) -> Result<(), String> {
+    let _guard = store::lock_data()?;
     let bytes = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
-    store::write_atomic(&store::settings_path(), &bytes)
+    store::write_atomic(&store::settings_path(), &bytes)?;
+    super::backups::daily_settings(&bytes);
+    Ok(())
 }
 
 #[tauri::command]

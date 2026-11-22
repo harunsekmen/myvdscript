@@ -2,6 +2,8 @@ import { activeModel, migrateProvider } from "./lib/aiProvider";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { DataSettings } from "./components/DataSettings";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { ConfirmDialog, TextDialog } from "./components/Dialogs";
 import { HomePage } from "./components/HomePage";
 import { LeftPane } from "./components/LeftPane";
@@ -12,6 +14,7 @@ import { SubtitlePicker } from "./components/SubtitlePicker";
 import { TopBar } from "./components/TopBar";
 import { VideoPanel } from "./components/VideoPanel";
 import { usePipeline } from "./hooks/usePipeline";
+import { useUpdater } from "./hooks/useUpdater";
 import { useVideoStats } from "./hooks/useVideoStats";
 import { useProjectStore, type PipelineLifecycle } from "./hooks/useProjectStore";
 import { useSplitLayout } from "./hooks/useSplitLayout";
@@ -63,6 +66,7 @@ export default function App() {
   const [models, setModels] = useState<string[]>([]);
   const getDocRef = useRef<() => any>(() => null);
   const insertRef = useRef<(markdown: string) => boolean>(() => false);
+  const [editorRevision, setEditorRevision] = useState(0);
   const [synthesisOpen, setSynthesisOpen] = useState(false);
   const [pendingSeek, setPendingSeek] = useState<{ sourceId: string; t: number } | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -98,8 +102,25 @@ export default function App() {
 
   // Proje durumu ile işleme hattı birbirine bağlıdır (proje silinince işlemi durur); kanca ref ile kurulur.
   const lifecycle = useRef<PipelineLifecycle>({ cancel: () => {}, reset: () => {} });
-  const { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, deleteById, editProject, clearAll } =
+  const { projects, project, projectRef, status, saver, mutate, updateProject, openProject, loadInitial, createProject, deleteById, editProject, clearAll, restoreProject } =
     useProjectStore({ patchSettings, lifecycle });
+
+  const flushAll = useCallback(async () => {
+    await Promise.all([saver.flush(), settingsSaver.flush()]);
+    const failure = saver.lastError() || settingsSaver.lastError();
+    if (failure) throw new Error(failure);
+  }, [saver, settingsSaver]);
+  const updater = useUpdater(flushAll);
+
+  const restoreFromBackup = async (id: string | null, date: string) => {
+    if (id) {
+      if (await restoreProject(id, date)) setEditorRevision((rev) => rev + 1);
+    } else {
+      await flushAll();
+      await api.restoreBackup(null, date);
+      window.location.reload();
+    }
+  };
   const pipe = usePipeline({ projectRef, mutate, updateProject, settingsRef, toast, openSettings: () => setShowSettings(true) });
   const videoStats = useVideoStats(projects, ready);
   // Eski sürümlerde bozuk kaydedilmiş başlıklar (�) videonun güncel başlığıyla bir kez onarılır.
@@ -264,9 +285,10 @@ export default function App() {
   const clearEverything = async () => {
     setDialog(null);
     try {
-      await clearAll();
+      setSynthesisOpen(false);
       setView("home");
-      toast("Tüm projeler temizlendi");
+      const path = await clearAll();
+      toast(`Tüm projeler temizlendi. Yedek ${path}`);
     } catch (e) {
       toast(`Temizlenemedi: ${e}`, "error");
     }
@@ -430,6 +452,7 @@ export default function App() {
         onSynthesis={() => setSynthesisOpen(true)}
       />
 
+      <UpdateBanner updater={updater} />
       {showProject && project && source ? (
         <main className="split" ref={splitRef}>
           <div className="split-left" style={{ width: `${(hasVideoPane ? L : settings.splitRatio) * 100}%` }}>
@@ -483,7 +506,7 @@ export default function App() {
           )}
           <div className="split-right">
             <RightPane
-              key={project.id}
+              key={`${project.id}-${editorRevision}`}
               project={project}
               tab={tab}
               onTab={setTab}
@@ -551,6 +574,7 @@ export default function App() {
           onKeyChanged={setHasKey}
           onGroqKeyChanged={setHasGroqKey}
           onYoutubeKeyChanged={setHasYoutubeKey}
+          dataSettings={<DataSettings projects={projects} activeId={project?.id ?? null} restore={restoreFromBackup} updater={updater} />}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -587,7 +611,7 @@ export default function App() {
         <ConfirmDialog title="Projeyi sil" message={`“${dialogMeta.title}”, resimleri ve ses kayıtları kalıcı olarak silinecek.`} confirmLabel="Sil" danger onConfirm={deleteProject} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === "clear" && (
-        <ConfirmDialog title="Tümünü temizle" message="Tüm projeler, scriptler ve kaydedilmiş resimler kalıcı olarak silinecek. Bu işlem geri alınamaz." confirmLabel="Hepsini sil" danger onConfirm={clearEverything} onCancel={() => setDialog(null)} />
+        <ConfirmDialog title="Tümünü temizle" message="Projeler, resimler ve ses kayıtları önce ZIP arşivine yedeklenir, ardından listeden kaldırılır." confirmLabel="Hepsini sil" danger onConfirm={clearEverything} onCancel={() => setDialog(null)} />
       )}
       {removing >= 0 && project && (
         <ConfirmDialog

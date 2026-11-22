@@ -167,13 +167,23 @@ fn fix_image_paths(v: &mut Value, id: &str, images_dir: &Path) {
 }
 
 #[tauri::command]
-pub fn save_project(mut project: Value) -> Result<u64, String> {
+pub fn save_project(project: Value) -> Result<u64, String> {
+    let _guard = store::lock_data()?;
+    write_valid_project(project)
+}
+
+fn write_valid_project(project: Value) -> Result<u64, String> {
     let id = project["id"].as_str().ok_or("Proje kimliği yok")?.to_string();
     let dir = store::project_dir(&id)?;
+    write_project(&dir, project)
+}
+
+pub fn write_project(dir: &Path, mut project: Value) -> Result<u64, String> {
     let now = now_ms();
     project["updatedAt"] = json!(now);
     let bytes = serde_json::to_vec_pretty(&project).map_err(|e| e.to_string())?;
     store::write_atomic(&dir.join("project.json"), &bytes)?;
+    super::backups::daily_project(dir, &bytes);
     // Liste için küçük özet; yazılamazsa sorun değil (list_projects project.json'a düşer).
     if let Ok(m) = serde_json::to_vec(&meta_of(&project)) {
         let _ = store::write_atomic(&dir.join("meta.json"), &m);
@@ -203,15 +213,17 @@ fn merge_patch(project: &mut Value, patch: &Value) {
 /// Açık olmayan bir projeyi ana sayfadan düzenler (aşama, kontrol listesi, not, sabitleme, arşiv, başlık).
 #[tauri::command]
 pub fn patch_project(id: String, patch: Value) -> Result<u64, String> {
+    let _guard = store::lock_data()?;
     let file = store::project_dir(&id)?.join("project.json");
     let text = fs::read_to_string(&file).map_err(|e| format!("Proje okunamadı: {e}"))?;
     let mut v: Value = serde_json::from_str(&text).map_err(|e| format!("Proje bozuk: {e}"))?;
     merge_patch(&mut v, &patch);
-    save_project(v)
+    write_valid_project(v)
 }
 
 #[tauri::command]
 pub fn delete_project(id: String) -> Result<(), String> {
+    let _guard = store::lock_data()?;
     let dir = store::project_dir(&id)?;
     if dir.exists() {
         fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
@@ -219,14 +231,13 @@ pub fn delete_project(id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Tüm projeleri (resimler dahil) kalıntısız siler.
+/// Arşiv doğrulandıktan sonra projeleri kaldırır. Büyük medya arşivleri UI iş parçacığını engellemez.
 #[tauri::command]
-pub fn clear_all_projects() -> Result<(), String> {
-    let dir = store::projects_dir();
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())
+pub async fn clear_all_projects() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let _guard = store::lock_data()?;
+        super::backups::archive_and_clear(&store::projects_dir(), &store::root().join("backups"))
+    }).await.map_err(|err| err.to_string())?
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ mod ytdlp;
 #[cfg(target_os = "macos")]
 mod youtube_embed;
 
-use commands::{ai, codex, export, external, images, projects, settings, stt, transcript, tts, videos, voice, whisper};
+use commands::{ai, backups, codex, diagnostics, export, external, images, projects, settings, stt, transcript, tts, updates, videos, voice, whisper};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,8 +21,19 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_log::Builder::new()
+            .targets([tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                file_name: Some(diagnostics::LOG_NAME.into()),
+            })])
+            .filter(|metadata| matches!(metadata.target(), "script_ai" | "script_store"))
+            .max_file_size(5 * 1024 * 1024)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(4))
+            .build())
         .manage(ai::AiState::default())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let _ = ytdlp::APP.set(app.handle().clone());
             let appdata = app.path().data_dir().map_err(|e| e.to_string())?;
             let root = store::pick_root(appdata);
@@ -56,6 +67,11 @@ pub fn run() {
             projects::delete_project,
             projects::clear_all_projects,
             projects::patch_project,
+            backups::list_backups,
+            backups::restore_backup,
+            diagnostics::export_diagnostics,
+            updates::automatic_update_supported,
+            updates::check_manual_update,
             videos::refresh_video_stats,
             videos::load_video_stats,
             videos::test_youtube_key,

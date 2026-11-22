@@ -20,9 +20,10 @@ interface Props {
   onGroqKeyChanged: (has: boolean) => void;
   onYoutubeKeyChanged: (has: boolean) => void;
   onClose: () => void;
+  dataSettings: ReactNode;
 }
 
-type Section = "ai" | "speech" | "voice" | "home" | "prompts" | "look";
+type Section = "ai" | "speech" | "voice" | "home" | "prompts" | "look" | "data";
 type Msg = { text: string; err?: boolean } | null;
 
 // ---- İkonlar (tek renk, çizgi) ----
@@ -32,6 +33,7 @@ const PATHS: Record<string, string> = {
   voice: "M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0",
   home: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10",
   prompts: "M4 5h16M4 10h10M4 15h16M4 20h7",
+  data: "M4 4h16v16H4zM4 9h16M9 14h6",
   look: "M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4",
   search: "M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM21 21l-4.3-4.3",
   close: "M6 6l12 12M18 6L6 18",
@@ -55,6 +57,7 @@ const SECTIONS: { id: Section; label: string; hint: string; keywords: string }[]
   { id: "voice", label: "Ses kaydı", hint: "Mikrofon, dil, parçalar", keywords: "ses kayıt mikrofon kayıt parça dil gürültü yankı kazanç geri sayım boşluk seslendirme voice" },
   { id: "home", label: "Ana sayfa", hint: "Aşamalar, video verisi", keywords: "ana sayfa aşama kontrol listesi izlenme yt-dlp youtube api anahtar pano kart otomatik" },
   { id: "prompts", label: "İstemler", hint: "Yazım stili ve AI talimatları", keywords: "istem prompt talimat sistem açıklama insight stil script dosya örnek txt md" },
+  { id: "data", label: "Veri ve güncelleme", hint: "Yedekler, tanılama", keywords: "yedek backup geri yükle güncelleme update tanılama dışa aktar log" },
   { id: "look", label: "Görünüm", hint: "Yazı tipi ve düzen", keywords: "yazı tipi font boyut satır aralığı genişlik oran renk segment görünüm" },
 ];
 
@@ -586,7 +589,7 @@ function ChecklistEditor({ items, onChange }: { items: string[]; onChange: (v: s
   );
 }
 
-export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYoutubeKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onYoutubeKeyChanged, onClose }: Props) {
+export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYoutubeKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onYoutubeKeyChanged, onClose, dataSettings }: Props) {
   const [section, setSection] = useState<Section>("ai");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -766,6 +769,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     home: s.statsSource === "api" && !hasYoutubeKey ? "warn" : null,
     prompts: s.systemPrompt !== DEFAULT_SETTINGS.systemPrompt || s.insightPrompt !== DEFAULT_SETTINGS.insightPrompt ? "warn" : null,
     look: null,
+    data: null,
   };
   const navTitle: Record<Section, string> = {
     ai: aiReady ? "Hazır" : useCodex ? "Codex oturumunu denetle" : needsKey ? "API anahtarı girilmedi" : "Model seçilmedi",
@@ -774,9 +778,11 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
     home: s.statsSource === "api" && !hasYoutubeKey ? "API modu için YouTube anahtarı gerekli" : "",
     prompts: navState.prompts ? "Özelleştirilmiş istem var" : "",
     look: "",
+    data: "",
   };
 
   const body: Record<Section, ReactNode> = {
+    data: dataSettings,
     ai: (
       <>
         <div className={"s-hero " + (aiReady ? "ok" : "warn")}>

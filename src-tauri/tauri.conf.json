@@ -31,5 +31,11 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+   },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/harunsekmen/myvdscript/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzQjlGMjAxM0M2RTEyQzEKUldUQkVtNDhBZks1Z3ltVFd2OEpsTHNnd2ZBMjMybHBmbC9LNXJibG1VcjhBVmFZaTdBYjh0UVUK"
+    }
   }
 }

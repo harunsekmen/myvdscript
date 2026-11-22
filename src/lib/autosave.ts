@@ -2,6 +2,7 @@ export type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 
 /** Debounce'lı otomatik kaydedici; flush() bekleyen kaydı hemen yazar. */
 export function createAutosaver<T>(save: (data: T) => Promise<unknown>, onStatus: (s: SaveStatus, err?: string) => void, delay = 600) {
+  let error: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let latest: T | null = null;
   let inflight: Promise<void> = Promise.resolve();
@@ -14,12 +15,13 @@ export function createAutosaver<T>(save: (data: T) => Promise<unknown>, onStatus
     onStatus("saving");
     inflight = inflight
       .then(() => save(data))
-      .then(() => onStatus(latest === null ? "saved" : "pending"))
-      .catch((e) => onStatus("error", String(e)));
+      .then(() => { error = null; onStatus(latest === null ? "saved" : "pending"); })
+      .catch((e) => { error = String(e); onStatus("error", error); });
     return inflight;
   };
 
   return {
+    lastError: () => error,
     schedule(data: T) {
       latest = data;
       onStatus("pending");
@@ -35,6 +37,7 @@ export function createAutosaver<T>(save: (data: T) => Promise<unknown>, onStatus
       if (timer) clearTimeout(timer);
       timer = null;
       latest = null;
+      error = null;
     },
   };
 }

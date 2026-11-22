@@ -25,10 +25,11 @@ pub struct CodexStatus {
 pub struct CodexError {
     pub message: String,
     pub unavailable: bool,
+    pub exit: Option<i32>,
 }
 
 fn failure(message: impl Into<String>) -> CodexError {
-    CodexError { message: message.into(), unavailable: false }
+    CodexError { message: message.into(), unavailable: false, exit: None }
 }
 
 fn cli(path: &str, directory: &std::path::Path) -> Command {
@@ -198,6 +199,7 @@ pub async fn run(
     #[cfg(unix)]
     command.process_group(0);
     let child = command.spawn().map_err(|error| CodexError {
+        exit: None,
         unavailable: error.kind() == io::ErrorKind::NotFound,
         message: format!("Codex CLI başlatılamadı: {error}"),
     })?;
@@ -243,6 +245,7 @@ pub async fn run(
         let auth_failure = output.answer.is_empty() && (auth_failure || unavailable(&output.error));
         return Err(CodexError {
             unavailable: auth_failure,
+            exit: status.code(),
             message: if auth_failure {
                 "Codex oturumu kullanılamıyor. Terminalde `codex login` ile oturum açın.".into()
             } else {

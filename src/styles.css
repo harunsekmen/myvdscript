@@ -1030,3 +1030,8 @@ button.vf-title:hover { color: var(--text); }
 .publish-wpm { display: grid; gap: 4px; }
 .publish-short { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
 .publish-short .input { min-width: 0; }
+
+.data-settings, .data-settings label { display: grid; gap: 8px; }
+.data-settings .s-card { display: grid; gap: 8px; justify-items: start; }
+.data-settings .s-card label { width: 100%; }
+.data-settings p { margin: 0; }

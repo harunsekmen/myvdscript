@@ -70,7 +70,12 @@ export const api = {
   loadProject: (id: string) => invoke<Project>("load_project", { id }),
   saveProject: (project: Project) => invoke<number>("save_project", { project }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
-  clearAll: () => invoke<void>("clear_all_projects"),
+  clearAll: () => invoke<string>("clear_all_projects"),
+  listBackups: (projectId: string | null) => invoke<string[]>("list_backups", { projectId }),
+  restoreBackup: (projectId: string | null, date: string) => invoke<void>("restore_backup", { projectId, date }),
+  exportDiagnostics: (path: string) => invoke<void>("export_diagnostics", { path }),
+  automaticUpdateSupported: () => invoke<boolean>("automatic_update_supported"),
+  checkManualUpdate: () => invoke<string | null>("check_manual_update"),
   saveImage: (projectId: string, dataBase64: string, ext: string) =>
     invoke<{ path: string; name: string }>("save_image", { projectId, dataBase64, ext }),
   readImage: (path: string) => invoke<string>("read_image", { path }),
