@@ -12,7 +12,16 @@ export interface Segment {
   marks?: SentenceMark[]; // cümle zamanları (AI zaman işaretlerinden); yoksa orijinal ses çalınmaz
 }
 
+export interface InsightSource {
+  url: string;
+  title: string;
+}
+export type InsightVerdict = "supported" | "contradicted" | "mixed" | "unverified";
+
 export interface InsightResult {
+  sources?: InsightSource[];
+  verdict?: InsightVerdict;
+  provider?: Settings["aiProvider"];
   id: string;
   model: string;
   text: string;
@@ -20,6 +29,7 @@ export interface InsightResult {
 }
 
 export interface Insight {
+  kind?: "explain" | "factcheck";
   id: string;
   segmentId: string;
   para: number; // segment içindeki paragraf sırası

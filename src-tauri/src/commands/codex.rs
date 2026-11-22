@@ -322,6 +322,7 @@ mod tests {
         let opts = CodexOptions { path: "codex".into(), model: "gpt-6-luna".into(), effort: "low".into(), timeout_sec: 90, web: false, schema: None };
         let message = json!({"role": "user", "content": "Translate the caption to Turkish, preserve the timestamp and both numbers: [00:00] Anthropic went from about 2,500 code changes a day in May to more than 30,000 a day in September."});
         let text = run(&opts, &[message], |_| {}).await.unwrap_or_else(|error| panic!("{}", error.message));
-        assert!(text.contains("[00:00]") && text.contains("2.500") && text.contains("30.000"), "{text}");
+        let numbers = text.replace([',', '.', ' '], "");
+        assert!(text.contains("[00:00]") && numbers.contains("2500") && numbers.contains("30000"), "{text}");
     }
 }

@@ -1,3 +1,4 @@
+import { api } from "../lib/api";
 import { useEffect, useState } from "react";
 import type { Insight } from "../lib/types";
 import { Markdown } from "./Markdown";
@@ -14,6 +15,12 @@ interface Props {
 }
 
 const W = 440;
+const verdictLabels = {
+  supported: "Kaynaklar destekliyor",
+  contradicted: "Kaynaklarla çelişiyor",
+  mixed: "Kanıtlar karışık",
+  unverified: "Doğrulanamadı",
+};
 
 export function InsightCard({ insight, anchor, models, defaultModel, live, onClose, onDelete, onRerun }: Props) {
   const n = insight.results.length;
@@ -38,7 +45,8 @@ export function InsightCard({ insight, anchor, models, defaultModel, live, onClo
       : { left, top: Math.min(anchor.bottom + 8, vh - 200) }
     : { left: vw / 2 - W / 2, top: 120 };
 
-  const shown = live && !live.error ? live.text : insight.results[idx]?.text ?? "";
+  const result = insight.results[idx];
+  const shown = live && !live.error ? live.text : result?.text ?? "";
   const modelOptions = Array.from(new Set([model, defaultModel, ...models].filter(Boolean)));
 
   return (
@@ -51,13 +59,22 @@ export function InsightCard({ insight, anchor, models, defaultModel, live, onClo
         {live?.error ? (
           <div className="banner error">{live.error}</div>
         ) : shown ? (
-          <Markdown text={shown} />
+          <>
+            {result?.verdict && <b>{verdictLabels[result.verdict]}</b>}
+            <Markdown text={shown} />
+            {!!result?.sources?.length && <ul aria-label="Web kaynakları">
+              {result.sources.map((source) => <li key={source.url}>
+                <button className="btn small" title={source.url} onClick={() => void api.openExternal(source.url)}>{source.title}</button>
+              </li>)}
+            </ul>}
+          </>
         ) : (
           <div className="muted">Yanıt bekleniyor…</div>
         )}
         {live && !live.error && <span className="caret" />}
       </div>
       <div className="ic-foot">
+        {!live && result?.provider && <span className="muted">{result.provider === "codex" ? "Codex CLI" : "API"}</span>}
         {n > 1 && !live && (
           <span className="pager">
             <button className="icon-btn" disabled={idx === 0} onClick={() => setIdx(idx - 1)}>‹</button>

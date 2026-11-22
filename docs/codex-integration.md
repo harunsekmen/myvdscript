@@ -8,7 +8,7 @@ Yerelde denenen sürüm `codex-cli 0.166.0`. `codex login status` mevcut ChatGPT
 | Uzun girdi ve şema | 24.000 karakteri aşan Türkçe test girdisi stdin üzerinden işlendi ve `--output-schema` nesnesi çözüldü. |
 | JSONL | `thread.started`, `turn.started`, `item.completed` içinde `agent_message` ve `turn.completed` gözlendi. Bu sürümde kullanıcıya görünür metin tamamlanan mesaj olarak geliyor. |
 | Gerçek örnek | Nate Herk videosunun ilk zaman damgalı cümlesi `gpt-6-luna` ile Türkçeye çevrildi. |
-| Kimlik, izin, platform | Oturumsuz hata, iptal, canlı web ve Windows davranışı bağımsız kabul kontrolleridir. |
+| Kimlik, izin, platform | Unix iptali sahte alt süreçle doğrulandı. Canlı web araması YouTube Help URL’lerini JSONL araç olayında döndürdü. Windows iptali ve oturumsuz hata ayrı kabul kontrolleri. |
 
 Argümanlar doğrudan alt sürece verilir. Prompt her zaman stdin üzerinden gönderilir. Uygulama işleri geçici bir dizinde, read-only sandbox, `-a never`, geçici oturum, kullanıcı yapılandırması ve kuralları kapalı çalıştırır. Uygulama, eklenti, hook, shell, snapshot, alt ajan ve MCP bağlantıları kapatılır. Kullanıcı metni talimatlardan ayrı bir JSON alanında tutulur. Web yalnız doğrulama isteğinde açılır.
 

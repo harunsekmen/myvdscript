@@ -1,8 +1,9 @@
-import { activeModel, providerOptions } from "../lib/aiProvider";
+import { activeModel } from "../lib/aiProvider";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { onYtdlpStatus, streamChat } from "../lib/api";
+import { onYtdlpStatus } from "../lib/api";
+import { runInsightRequest } from "../lib/insights";
 import { segStyle } from "../lib/colors";
-import { buildInsightMessage, CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
+import { CUSTOM_PROMPT_PLACEHOLDER } from "../lib/prompts";
 import { audioRange, markTimeAt, paragraphsOf, sentenceAtTime } from "../lib/segmentParser";
 import { activeSource, sourceLabel } from "../lib/sources";
 import { speak } from "../lib/speech";
@@ -339,17 +340,13 @@ export function LeftPane({
     (insight: Insight, model: string, context: string) => {
       const sourceId = source.id;
       runRef.current?.cancel();
-      const h = streamChat({
-        ...providerOptions(settings, { insight: true, model }),
-        system: settings.insightPrompt,
-        user: buildInsightMessage(insight.quote, context),
-        onText: (t) => setLive({ id: insight.id, text: t }),
-      });
+      const kind = insight.kind ?? "explain";
+      const h = runInsightRequest(settings, kind, model, insight.quote, context);
       runRef.current = { id: insight.id, cancel: h.cancel };
       setLive({ id: insight.id, text: "" });
       h.done
-        .then((text) => {
-          const res = { id: crypto.randomUUID(), model, text: text.trim(), createdAt: Date.now() };
+        .then((result) => {
+          const res = { id: crypto.randomUUID(), model, ...result, provider: settings.aiProvider, createdAt: Date.now() };
           onInsights(sourceId, insightsRef.current.map((i) => (i.id === insight.id ? { ...i, results: [...i.results, res] } : i)));
           setLive(null);
         })
@@ -361,10 +358,11 @@ export function LeftPane({
     [settings, onInsights, source.id],
   );
 
-  const explain = () => {
+  const addInsight = (kind: "explain" | "factcheck") => {
     if (!sel) return;
     if (!activeModel(settings)) return onToast("Önce Ayarlar'dan bir model seçin", "error");
     const insight: Insight = {
+      kind,
       id: crypto.randomUUID(),
       segmentId: sel.segmentId,
       para: sel.para,
@@ -839,7 +837,8 @@ export function LeftPane({
           style={{ left: selLeft, top: Math.max(8, sel.rect.top - 40) }}
           onMouseDown={(e) => e.preventDefault()}
         >
-          <button onClick={explain}>✦ Açıkla</button>
+          <button onClick={() => addInsight("explain")}>✦ Açıkla</button>
+          <button onClick={() => addInsight("factcheck")}>İddiayı doğrula</button>
           <button className="speak" onClick={askSel} title="Seçili metni alıntılayarak AI'a soru sor">Sor</button>
           {sel.quote.length <= SPEAK_MAX_CHARS && /\p{L}/u.test(sel.quote) && (
             <button className="speak" onClick={speakSel} title="Seçili metni dinle" aria-label="Seçili metni dinle">
