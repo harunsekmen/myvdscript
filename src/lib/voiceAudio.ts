@@ -223,6 +223,10 @@ const MIME_CANDIDATES: [string, string][] = [
 
 /** Mikrofonu açar; izin yoksa ya da cihaz bulunamazsa anlaşılır bir hata fırlatır. */
 export async function openMic(o: RecorderOptions): Promise<MediaStream> {
+  const devices = navigator.mediaDevices;
+  if (!devices?.getUserMedia) {
+    throw new Error("Bu uygulama oturumunda mikrofon erişimi kullanılamıyor. Uygulamayı yeniden açıp tekrar deneyin.");
+  }
   const audio: MediaTrackConstraints = {
     channelCount: 1,
     noiseSuppression: o.noiseSuppression,
@@ -231,14 +235,14 @@ export async function openMic(o: RecorderOptions): Promise<MediaStream> {
   };
   if (o.deviceId) audio.deviceId = { exact: o.deviceId };
   try {
-    return await navigator.mediaDevices.getUserMedia({ audio });
+    return await devices.getUserMedia({ audio });
   } catch (e) {
     const name = (e as DOMException)?.name;
     if (name === "OverconstrainedError" && o.deviceId) {
       // Seçili mikrofon takılı değil: varsayılana düş.
       return openMic({ ...o, deviceId: "" });
     }
-    if (name === "NotAllowedError") throw new Error("Mikrofon izni verilmedi (Windows Ayarlar › Gizlilik › Mikrofon)");
+    if (name === "NotAllowedError") throw new Error("Mikrofon izni verilmedi. İşletim sisteminin gizlilik ayarlarından Script Atölyesi'ne mikrofon izni verin.");
     if (name === "NotFoundError") throw new Error("Mikrofon bulunamadı");
     if (name === "NotReadableError") throw new Error("Mikrofon başka bir uygulama tarafından kullanılıyor");
     throw new Error(`Mikrofon açılamadı: ${e}`);
