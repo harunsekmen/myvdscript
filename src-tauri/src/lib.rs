@@ -4,6 +4,8 @@ mod http;
 mod mac_tools;
 mod store;
 mod ytdlp;
+#[cfg(all(windows, feature = "updater-smoke"))]
+mod updater_smoke;
 #[cfg(target_os = "macos")]
 mod youtube_embed;
 
@@ -34,6 +36,8 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            #[cfg(all(windows, feature = "updater-smoke"))]
+            updater_smoke::start(app.handle());
             let _ = ytdlp::APP.set(app.handle().clone());
             let appdata = app.path().data_dir().map_err(|e| e.to_string())?;
             let root = store::pick_root(appdata);

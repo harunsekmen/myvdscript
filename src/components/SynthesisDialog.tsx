@@ -59,7 +59,7 @@ export function SynthesisDialog({ project, settings, saveRun, close, seek, inser
             <label>Model<input className="input" maxLength={100} value={model} onChange={(e) => setModel(e.target.value)} disabled={!!progress} /></label>
             {settings.aiProvider === "codex" && <label>Düşünme düzeyi<select className="input" value={effort} disabled={!!progress} onChange={(e) => setEffort(e.target.value)}>
               <option value="">Varsayılan</option>
-              {["minimal", "low", "medium", "high", "xhigh"].map((value) => <option key={value}>{value}</option>)}
+              {["low", "medium", "high", "xhigh", "max", "ultra"].map((value) => <option key={value}>{value}</option>)}
             </select></label>}
           </div>
           {selected.length < 2 && <small className="muted">Sentez için en az iki metin kaynağı seçin.</small>}

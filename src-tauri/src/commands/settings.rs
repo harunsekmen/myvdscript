@@ -61,31 +61,31 @@ pub fn save_settings(settings: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn has_api_key() -> bool {
-    api_key().is_some()
+pub async fn has_api_key() -> bool {
+    tauri::async_runtime::spawn_blocking(|| api_key().is_some()).await.unwrap_or(false)
 }
 
 #[tauri::command]
-pub fn set_api_key(key: String) -> Result<(), String> {
-    write_key(USER, &key)
+pub async fn set_api_key(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_key(USER, &key)).await.map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-pub fn has_groq_key() -> bool {
-    groq_key().is_some()
+pub async fn has_groq_key() -> bool {
+    tauri::async_runtime::spawn_blocking(|| groq_key().is_some()).await.unwrap_or(false)
 }
 
 #[tauri::command]
-pub fn set_groq_key(key: String) -> Result<(), String> {
-    write_key(GROQ_USER, &key)
+pub async fn set_groq_key(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_key(GROQ_USER, &key)).await.map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-pub fn has_youtube_key() -> bool {
-    youtube_key().is_some()
+pub async fn has_youtube_key() -> bool {
+    tauri::async_runtime::spawn_blocking(|| youtube_key().is_some()).await.unwrap_or(false)
 }
 
 #[tauri::command]
-pub fn set_youtube_key(key: String) -> Result<(), String> {
-    write_key(YOUTUBE_USER, &key)
+pub async fn set_youtube_key(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_key(YOUTUBE_USER, &key)).await.map_err(|err| err.to_string())?
 }

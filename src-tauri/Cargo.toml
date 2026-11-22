@@ -1,8 +1,11 @@
 [package]
 name = "script-atolyesi"
-version = "0.1.0"
+version = "0.2.0"
 description = "YouTube script yazım aracı"
 edition = "2021"
+
+[features]
+updater-smoke = []
 
 [lib]
 name = "script_atolyesi_lib"

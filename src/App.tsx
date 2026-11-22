@@ -163,10 +163,7 @@ export default function App() {
       if (!s.insightPrompt.trim() || isLegacyInsightPrompt(s.insightPrompt)) s.insightPrompt = DEFAULT_INSIGHT_PROMPT;
       settingsRef.current = s;
       setSettings(s);
-      setHasKey(await api.hasApiKey());
-      setHasGroqKey(await api.hasGroqKey());
       void refreshWhisper();
-      setHasYoutubeKey(await api.hasYoutubeKey());
       await loadInitial();
       setReady(true);
       refreshModels(); // yerel sunucular anahtarsız da çalışabilir
@@ -175,6 +172,21 @@ export default function App() {
       setReady(true);
     });
   }, [refreshModels, toast, loadInitial]);
+
+  useEffect(() => {
+    if (!ready || settings.aiProvider !== "api") return;
+    void api.hasApiKey().then(setHasKey).catch(() => {});
+  }, [ready, settings.aiProvider]);
+
+  useEffect(() => {
+    if (!ready || settings.sttEngine !== "groq") return;
+    void api.hasGroqKey().then(setHasGroqKey).catch(() => {});
+  }, [ready, settings.sttEngine]);
+
+  useEffect(() => {
+    if (!showSettings && (!ready || settings.statsSource !== "api")) return;
+    void api.hasYoutubeKey().then(setHasYoutubeKey).catch(() => {});
+  }, [showSettings, ready, settings.statsSource]);
 
   // ---- Ayarları CSS değişkenlerine uygula ----
   useEffect(() => {

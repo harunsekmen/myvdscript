@@ -1,5 +1,5 @@
 import { providerOptions } from "./aiProvider";
-import { streamChat } from "./api";
+import { CancelledError, streamChat } from "./api";
 import { buildInsightMessage } from "./prompts";
 import type { InsightResult, InsightSource, InsightVerdict, Settings } from "./types";
 
@@ -87,7 +87,15 @@ export function runInsightRequest(settings: Settings, kind: "explain" | "factche
     onSearch: (item) => events.push(item),
   });
   return {
-    done: handle.done.then((text) => web ? resolveInsight(text, events, kind) : { text: text.trim() }),
+    done: handle.done.then(
+      (text) => web ? resolveInsight(text, events, kind) : { text: text.trim() },
+      (error) => {
+        if (kind === "factcheck" && !(error instanceof CancelledError)) {
+          return { text: unverifiedText, verdict: "unverified" as const };
+        }
+        throw error;
+      },
+    ),
     cancel: handle.cancel,
   };
 }

@@ -1,0 +1,57 @@
+name: Release draft
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: write
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+            updater: true
+          - os: macos-latest
+            bundles: app,dmg
+            updater: false
+          - os: macos-15-intel
+            bundles: app,dmg
+            updater: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Fetch the Windows yt-dlp sidecar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = 'src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe'
+          New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+          Invoke-WebRequest 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe' -OutFile $target
+          if ((Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d') {
+            throw 'yt-dlp checksum mismatch'
+          }
+      - name: Bundle and upload to draft
+        uses: tauri-apps/tauri-action@action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Script Atölyesi ${{ github.ref_name }}
+          releaseBody: Windows NSIS ve MSI paketleri, Windows updater manifesti ve macOS disk imajları.
+          releaseDraft: true
+          uploadUpdaterJson: ${{ matrix.updater }}
+          uploadPlainBinary: ${{ runner.os == 'Windows' }}
+          args: --bundles ${{ matrix.bundles }}
+      - name: Verify signed NSIS update on Windows
+        if: runner.os == 'Windows' && github.ref_name == 'v0.2.0'
+        shell: pwsh
+        run: .github/scripts/windows-updater-smoke.ps1

@@ -14,7 +14,7 @@ YouTube script yazım aracı (Tauri 2 + React). Video linkinden altyazı çeker,
 - `npm ci` ve `npm run tauri dev` ile geliştirin.
 - `npm run tauri build -- --bundles app` ile `src-tauri/target/release/bundle/macos/` altında uygulama paketi oluşturun.
 - API anahtarları macOS Keychain'de saklanır. Projeler ve ayarlar `~/Library/Application Support/ScriptAtolyesi` altındadır.
-- Metin işlemesi için Ayarlar › Yapay zekâ bölümünden OpenAI uyumlu bir sunucu ve model seçin. Yerel sunucu kendi başına çalışır ve API anahtarı gerektirmeyebilir.
+- Metin işlemesi için Codex CLI kurun ve Terminal’de `codex login` ile ChatGPT oturumunu açın. Ayarlar › Yapay zekâ › Bağlantıyı denetle ile sürümü ve oturumu kontrol edin. Aynı bölümde OpenAI uyumlu sunucu ve model ayarlanabilir.
 - Ses dökümü için Groq seçeneği kullanılabilir. Uygulama içinden indirilen yerel Whisper motoru ve CUDA paketi Windows içindir.
 
 ## Kaynak videolar
@@ -28,3 +28,10 @@ Sağ panelde "＋ Ses / video" ile bilgisayardan bir dosya seç; Groq Whisper (`
 ## Taşınabilir exe
 `npm run tauri build -- --no-bundle` → `src-tauri/target/release/script-atolyesi.exe`.
 Veriler (ayarlar, projeler, resimler) exe'nin konumundan bağımsız olarak her zaman `%APPDATA%\ScriptAtolyesi` altında tutulur; eski sürümlerin exe yanındaki `ScriptAtolyesi/` klasörü ilk açılışta bir kez buraya taşınır. API anahtarı Windows Kimlik Bilgisi Yöneticisi'nde tutulur.
+
+## Sentez ve yayın
+
+- Bir projeye video veya metin kaynakları ekleyin. **Sentez** içinden kaynakları, anlatım açısını ve hedef uzunluğu seçin. Zaman düğmeleri videoyu ilgili saniyeye götürür. **Editöre aktar** senaryonun sonuna metni ekler.
+- **Yayın** sekmesi başlık, açıklama, bölüm, etiket ve sabit yorum taslakları üretir. Senaryoda seçili metinden kısa video taslağı alınabilir. Ses kaydı zamanları varsa SRT onları kullanır. Senaryodan hesaplanan zamanlar tahmini olarak gösterilir.
+- **Ayarlar › Veri ve güncelleme** günlük yedekleri, geri yüklemeyi, tanılamayı ve sürüm denetimini açar.
+- [Codex mimarisi](docs/codex-integration.md) ve [geliştirme planı](docs/gelistirme-plani.md).

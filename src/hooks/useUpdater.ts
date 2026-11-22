@@ -24,7 +24,14 @@ export function useUpdater(flush: () => Promise<void>) {
       update.current = null;
       const automatic = await api.automaticUpdateSupported();
       if (automatic) {
-        update.current = await check({ timeout: 12_000 });
+        try {
+          update.current = await check({ timeout: 12_000 });
+        } catch (error) {
+          if (!String(error).includes("Could not fetch a valid release JSON")) throw error;
+          const version = await api.checkManualUpdate();
+          setState(version ? { status: "available", version, manual: true } : { status: "current" });
+          return;
+        }
         if (update.current) {
           setState({ status: "available", version: update.current.version, manual: false });
           return;
