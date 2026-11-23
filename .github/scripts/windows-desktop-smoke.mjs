@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -31,8 +33,12 @@ await new Promise((resolve, reject) => server.once("error", reject).listen(0, "1
 const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
 const debugPort = 13947;
 const child = spawn(process.argv[2], [], {
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` },
-  stdio: "ignore",
+  env: {
+    ...process.env,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
+    WEBVIEW2_USER_DATA_FOLDER: join(tmpdir(), "script-atolyesi-smoke-webview"),
+  },
+  stdio: ["ignore", "inherit", "inherit"],
 });
 
 async function wait(label, callback, { timeout = 50_000 } = {}) {
@@ -50,8 +56,9 @@ async function wait(label, callback, { timeout = 50_000 } = {}) {
 let socket;
 try {
   const tab = await wait("WebView2 page", async () => {
+    if (child.exitCode != null) throw new Error(`app exited with code ${child.exitCode}`);
     const list = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((r) => r.json());
-    return list.find((target) => target.type === "page" && target.url.startsWith("http://tauri."));
+    return list.find((target) => target.type === "page" && target.url.includes("tauri.localhost"));
   });
   socket = new WebSocket(tab.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {

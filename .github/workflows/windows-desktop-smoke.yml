@@ -30,4 +30,13 @@ jobs:
       - run: npm run tauri build -- --debug --no-bundle
       - name: Exercise the installed webview and data store
         shell: pwsh
-        run: node .github/scripts/windows-desktop-smoke.mjs (Resolve-Path 'src-tauri/target/debug/script-atolyesi.exe')
+        run: |
+          $edge = 'HKCU:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          New-Item $edge -Force | Out-Null
+          New-ItemProperty -Path $edge -Name 'script-atolyesi.exe' -Value '--remote-debugging-port=13947' -PropertyType String -Force | Out-Null
+          try {
+            node .github/scripts/windows-desktop-smoke.mjs (Resolve-Path 'src-tauri/target/debug/script-atolyesi.exe')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-ItemProperty -Path $edge -Name 'script-atolyesi.exe' -ErrorAction SilentlyContinue
+          }
