@@ -15,10 +15,10 @@ Mac testi, uygulamanın kendi arayüzünde [Nate Herk videosunun](https://www.yo
 
 Yerelde `npm ci`, TypeScript, 176 Vitest testi, Vite derlemesi, 34 Rust testi ve Clippy geçti. Oturum gerektiren canlı Rust testi ayrıca çalıştırılıp geçti.
 
-Düzenlenen senaryo disk kaydında ve uygulamanın yeniden açılışında doğrulandı.
+Düzenlenen senaryo disk kaydında ve uygulamanın yeniden açılışında doğrulandı. Windows masaüstü testi kontrollü yerel sağlayıcıyla altyazı işleme, iddia kartı, sentez, editöre aktarım, yayın ve günlük yedeği çalıştırdı.
 
 Bu Mac’te Codex, Finder’dan başlatılan uygulamanın alt süreci olarak korumalı klasörlere bağlanan mevcut becerileri tararken bekledi. Yerel başlatıcı uygulama paketinin çalıştırılabilir dosyasını Terminal bağlamında açar. Senaryo ve yayın verileri uygulamanın mevcut veri klasöründe durur.
 
 GitHub sürümü taslaktır. Depoların GitHub lisans alanı boş. macOS dağıtımı manuel indirme kullanır.
 
-[Paketleme ve imzalı Windows güncelleme çalışması](https://github.com/harunsekmen/myvdscript/actions/runs/45085832197)
+[Paketleme ve imzalı Windows güncelleme çalışması](https://github.com/harunsekmen/myvdscript/actions/runs/45085832197) · [Windows masaüstü testi](https://github.com/harunsekmen/myvdscript/actions/runs/45086873773)
