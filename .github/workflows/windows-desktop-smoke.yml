@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/windows-desktop-smoke.yml'
       - '.github/scripts/windows-desktop-smoke.mjs'
+      - '.github/scripts/windows-smoke-scenario.js'
 permissions:
   contents: read
 jobs:
@@ -27,16 +28,9 @@ jobs:
           if ((Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d') {
             throw 'yt-dlp checksum mismatch'
           }
+      - name: Add the disposable desktop test to the frontend
+        run: node .github/scripts/windows-desktop-smoke.mjs prepare
       - run: npm run tauri build -- --debug --no-bundle
       - name: Exercise the installed webview and data store
         shell: pwsh
-        run: |
-          $edge = 'HKCU:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
-          New-Item $edge -Force | Out-Null
-          New-ItemProperty -Path $edge -Name 'script-atolyesi.exe' -Value '--remote-debugging-port=13947' -PropertyType String -Force | Out-Null
-          try {
-            node .github/scripts/windows-desktop-smoke.mjs (Resolve-Path 'src-tauri/target/debug/script-atolyesi.exe')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally {
-            Remove-ItemProperty -Path $edge -Name 'script-atolyesi.exe' -ErrorAction SilentlyContinue
-          }
+        run: node .github/scripts/windows-desktop-smoke.mjs (Resolve-Path 'src-tauri/target/debug/script-atolyesi.exe')
