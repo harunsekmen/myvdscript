@@ -55,6 +55,7 @@ export const DEFAULT_SETTINGS: Settings = {
   whisperModel: "large-v3-turbo-q5_0",
   whisperGpu: true,
   cookiesBrowser: "",
+  firefoxProfilePath: "",
   stages: DEFAULT_STAGES,
   defaultChecklist: ["Kaynakları izle", "Taslak yaz", "Gözden geçir", "Çekim", "Thumbnail", "Yükle"],
   autoStage: true,

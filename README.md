@@ -18,6 +18,10 @@ YouTube script yazım aracı (Tauri 2 + React). Video linkinden altyazı çeker,
 - Metin işlemesi için Codex CLI kurun ve Terminal’de `codex login` ile ChatGPT oturumunu açın. Ayarlar › Yapay zekâ › Bağlantıyı denetle ile sürümü ve oturumu kontrol edin. Aynı bölümde OpenAI uyumlu sunucu ve model ayarlanabilir.
 - Ses dökümü için Groq seçeneği kullanılabilir. Uygulama içinden indirilen yerel Whisper motoru ve CUDA paketi Windows içindir.
 
+## Firefox çerezleri
+
+Ayarlar › Ses ve YouTube › Firefox bölümünden bir profil seçip **Çerezleri test et** ile okuma erişimini denetleyin. macOS varsayılan profilin erişimini engellerse **Ayrı Firefox profili aç** ile bu uygulama için ayrı bir Firefox penceresi açabilirsiniz. Çerez oluşması için YouTube’u o pencerede açın. Hesapla erişilmesi gereken videolar için aynı profilde YouTube oturumunu açın.
+
 ## Kaynak videolar
 - **Çoklu kaynak:** Bir projede birden çok video kaynak olabilir. Sol panelde kaynak sekmeleri görünür; "＋ Kaynak" ile başka bir YouTube bağlantısı eklenir (başlık isteğe bağlı), `×` ile kaynak silinir. Her kaynağın altyazısı, bölümleri ve açıklamaları (✦ Açıkla) kendine aittir; orta paneldeki video etkin kaynağı oynatır. Eski tek kaynaklı projeler ilk açılışta otomatik dönüştürülür.
 - **Yeniden işle ▾:** varsayılan istemle yeniden işle, özel istemle işle, **Başka altyazı seç…** (videodaki diğer diller/otomatik çeviri) ve **Önceki işlemeye dön**. Yeniden işlemeden önceki sürüm (bölümler + açıklamalar) kaynak başına son 3 sürüm olarak saklanır; geri dönünce güncel sürüm onunla yer değiştirir.

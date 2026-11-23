@@ -96,8 +96,15 @@ export default function App() {
       settingsRef.current = next;
       setSettings(next);
       settingsSaver.schedule(next);
+      // yt-dlp, çerez kaynağını ve profil yolunu her çalıştırmada diskten okur.
+      if ("cookiesBrowser" in patch || "firefoxProfilePath" in patch) {
+        void settingsSaver.flush().then(() => {
+          const error = settingsSaver.lastError();
+          if (error) toast(`Firefox ayarı kaydedilemedi: ${error}`, "error");
+        });
+      }
     },
-    [settingsSaver],
+    [settingsSaver, toast],
   );
 
   // Proje durumu ile işleme hattı birbirine bağlıdır (proje silinince işlemi durur); kanca ref ile kurulur.

@@ -320,6 +320,7 @@ export interface Settings {
   whisperModel: string;
   /** CUDA paketi indirildiyse yerel Whisper'ı NVIDIA ekran kartında çalıştır. */
   whisperGpu: boolean;
+  firefoxProfilePath: string; // boşken yt-dlp otomatik Firefox profili arar
   cookiesBrowser: string; // yt-dlp çerez kaynağı: "" (yok) veya "firefox"
   stages: StageDef[];
   defaultChecklist: string[];

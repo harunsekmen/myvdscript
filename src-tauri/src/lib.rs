@@ -98,6 +98,8 @@ pub fn run() {
             whisper::whisper_delete_model,
             whisper::whisper_download_cuda,
             whisper::whisper_delete_cuda,
+            ytdlp::test_firefox_cookies,
+            ytdlp::open_firefox_profile,
             transcript::list_subtitles,
             transcript::fetch_transcript,
             transcript::fetch_default_transcript,

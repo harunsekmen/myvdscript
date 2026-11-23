@@ -1,3 +1,4 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { StyleReferencesEditor } from "./StyleReferencesEditor";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api, onWhisperDownload, type WhisperProgress } from "../lib/api";
@@ -589,6 +590,70 @@ function ChecklistEditor({ items, onChange }: { items: string[]; onChange: (v: s
   );
 }
 
+function FirefoxCookies({ settings, onChange }: { settings: Settings; onChange: Props["onChange"] }) {
+  const [message, setMessage] = useState<Msg>(null);
+  const [busy, setBusy] = useState(false);
+  const enabled = settings.cookiesBrowser === "firefox";
+  const mac = /Mac/.test(navigator.platform);
+
+  const act = async (action: () => Promise<void>) => {
+    setMessage(null);
+    setBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      setMessage({ text: String(error), err: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const check = () => act(async () => {
+    const count = await api.testFirefoxCookies(settings.firefoxProfilePath);
+    setMessage(count
+      ? { text: `Firefox’tan ${count} çerez okundu.` }
+      : { text: "Profil okunuyor. YouTube’u bu profilde açıp tekrar deneyin.", err: true });
+  });
+
+  const choose = () => act(async () => {
+    const path = await open({ directory: true, title: "Firefox profil klasörünü seçin" });
+    if (typeof path !== "string") return;
+    await api.testFirefoxCookies(path);
+    onChange({ firefoxProfilePath: path });
+  });
+
+  return <Card title="YouTube" hint="Firefox’taki YouTube oturumunuzun çerezlerini kullanabilirsiniz.">
+    <Row label="Çerez kaynağı">
+      <Segmented
+        value={enabled ? "firefox" : "none"}
+        options={[{ v: "none", label: "Yok" }, { v: "firefox", label: "Firefox" }]}
+        onChange={(value) => {
+          setMessage(null);
+          onChange({ cookiesBrowser: value === "firefox" ? "firefox" : "" });
+        }}
+      />
+    </Row>
+    {enabled && <>
+      <Row label="Firefox profili" wide desc={settings.firefoxProfilePath ? <span style={{ overflowWrap: "anywhere" }}>{settings.firefoxProfilePath}</span> : "Otomatik profil seçimi"}>
+        <div className="publish-actions">
+          {mac && <button className="btn" disabled={busy} onClick={() => void act(async () => {
+            const path = await api.openFirefoxProfile();
+            onChange({ firefoxProfilePath: path });
+            setMessage({ text: "Bu Firefox penceresinde YouTube’u açtıktan sonra “Çerezleri test et”i kullanın." });
+          })}>Ayrı Firefox profili aç</button>}
+          <button className="btn" disabled={busy} onClick={() => void choose()}>Profil seç…</button>
+          {settings.firefoxProfilePath && <button className="btn" disabled={busy} onClick={() => {
+            setMessage(null);
+            onChange({ firefoxProfilePath: "" });
+          }}>Otomatik seç</button>}
+          <button className="btn" disabled={busy} onClick={() => void check()}>Çerezleri test et</button>
+        </div>
+      </Row>
+      <div role="status"><Status msg={message} /></div>
+    </>}
+  </Card>;
+}
+
 export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYoutubeKey, onChange, onModels, onKeyChanged, onGroqKeyChanged, onYoutubeKeyChanged, onClose, dataSettings }: Props) {
   const [section, setSection] = useState<Section>("ai");
   const [query, setQuery] = useState("");
@@ -892,18 +957,7 @@ export function SettingsDialog({ settings: s, models, hasKey, hasGroqKey, hasYou
           </Row>
           <Status msg={groqMsg} />
         </Card>
-        <Card title="YouTube" hint="YouTube 'istek sınırı' (HTTP 429) hatası verirse, giriş yaptığınız tarayıcının çerezleri kullanılabilir. Tarayıcıyı kapatmanız gerekmez.">
-          <Row label="Çerez kaynağı" desc="Firefox'ta YouTube'a giriş yapmış olmanız gerekir.">
-            <Segmented
-              value={s.cookiesBrowser === "firefox" ? "firefox" : "none"}
-              options={[
-                { v: "none", label: "Yok" },
-                { v: "firefox", label: "Firefox" },
-              ]}
-              onChange={(v) => onChange({ cookiesBrowser: v === "firefox" ? "firefox" : "" })}
-            />
-          </Row>
-        </Card>
+        <FirefoxCookies settings={s} onChange={onChange} />
       </>
     ),
     voice: (
