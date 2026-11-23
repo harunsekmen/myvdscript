@@ -84,7 +84,7 @@ try {
   const invoke = (command, args) => evalPage(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args ?? {})})`);
   const text = (expected) => evalPage(`document.body.innerText.includes(${JSON.stringify(expected)})`);
   const click = (expected) => evalPage(`(() => {
-    const b = [...document.querySelectorAll('button')].find((button) => !button.disabled && button.innerText.trim().startsWith(${JSON.stringify(expected)}));
+    const b = [...document.querySelectorAll('button')].find((button) => !button.disabled && button.innerText.trim().replace(/\\s+/g, ' ').startsWith(${JSON.stringify(expected)}));
     if (!b) return false;
     b.click();
     return true;
@@ -117,7 +117,7 @@ try {
   console.log("Windows transcript processing and rendering verified");
 
   await wait("factcheck action", async () => {
-    if (await text("Doğrula")) return true;
+    if (await text("İddiayı doğrula")) return true;
     return evalPage(`(() => {
       const p = document.querySelector('p[data-para]');
       if (!p) return false;
@@ -129,7 +129,7 @@ try {
     })()`);
   });
   await wait("run API factcheck", () => evalPage(`(() => {
-    const b = [...document.querySelectorAll('button')].find((item) => item.innerText.includes('Doğrula'));
+    const b = [...document.querySelectorAll('button')].find((item) => item.innerText.includes('İddiayı doğrula'));
     if (!b) return false;
     b.click();
     return true;
